@@ -1,6 +1,7 @@
 package com.codex.remote.data.ssh
 
 import android.content.Context
+import com.codex.remote.data.security.readBytesBounded
 import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.ConnectionSecrets
 import com.codex.remote.domain.RemotePlatform
@@ -8,14 +9,13 @@ import com.codex.remote.domain.SavedConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
-import net.schmizz.sshj.DefaultSecurityProviderConfig
 import net.schmizz.sshj.common.Buffer
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
+import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.Closeable
-import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.security.MessageDigest
@@ -46,6 +46,8 @@ class ActiveSshTransport internal constructor(
     val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
 
     override fun close() {
+        // Close the socket first so blocked readers/writers cannot prevent shutdown.
+        runCatching { ssh.close() }
         runCatching { writer.close() }
         runCatching { command.close() }
         runCatching { session.close() }
@@ -59,6 +61,12 @@ class SshAppServerTransportFactory(private val context: Context) {
         connection: SavedConnection,
         secrets: ConnectionSecrets,
     ): ActiveSshTransport = withContext(Dispatchers.IO) {
+        // Remove key files left by older versions after a process crash.
+        context.cacheDir.listFiles { file ->
+            file.isFile && file.name.startsWith("codex_remote_") && file.name.endsWith(".key")
+        }?.forEach { file ->
+            check(file.delete()) { "Unable to remove a legacy SSH key cache file" }
+        }
         var observedFingerprint = ""
         val ssh = authenticatedClient(connection, secrets) { observedFingerprint = it }
         try {
@@ -137,18 +145,12 @@ class SshAppServerTransportFactory(private val context: Context) {
         username: String,
         secrets: ConnectionSecrets,
     ) {
-        val keyFile = File.createTempFile("codex_remote_", ".key", context.cacheDir)
+        val passphrase = secrets.passphrase.takeIf { it.isNotBlank() }?.toCharArray()
         try {
-            keyFile.writeText(secrets.privateKey, Charsets.UTF_8)
-            val provider = if (secrets.passphrase.isBlank()) {
-                ssh.loadKeys(keyFile.absolutePath)
-            } else {
-                ssh.loadKeys(keyFile.absolutePath, secrets.passphrase.toCharArray())
-            }
+            val provider = ssh.loadKeys(secrets.privateKey, null, PasswordUtils.createOneOff(passphrase))
             ssh.authPublickey(username, provider)
         } finally {
-            keyFile.writeText("")
-            keyFile.delete()
+            passphrase?.fill('\u0000')
         }
     }
 
@@ -195,8 +197,8 @@ class SshAppServerTransportFactory(private val context: Context) {
                 }
                 ProbeResult(
                     exitStatus = command.exitStatus ?: -1,
-                    stdout = command.inputStream.bufferedReader(Charsets.UTF_8).readText(),
-                    stderr = command.errorStream.bufferedReader(Charsets.UTF_8).readText(),
+                    stdout = command.inputStream.readBytesBounded(MAX_PROBE_OUTPUT_BYTES).toString(Charsets.UTF_8),
+                    stderr = command.errorStream.readBytesBounded(MAX_PROBE_OUTPUT_BYTES).toString(Charsets.UTF_8),
                 )
             } finally {
                 runCatching { command.close() }
@@ -214,6 +216,7 @@ class SshAppServerTransportFactory(private val context: Context) {
 
     companion object {
         private const val PROBE_TIMEOUT_SECONDS = 15L
+        private const val MAX_PROBE_OUTPUT_BYTES = 64 * 1024
     }
 }
 
@@ -230,10 +233,4 @@ internal fun appServerCommand(platform: RemotePlatform): String = when (platform
         "exec \"\${SHELL:-/bin/sh}\" -lc 'exec codex app-server --listen stdio://'"
     RemotePlatform.WINDOWS ->
         "powershell.exe -NoLogo -NonInteractive -Command \"& { codex app-server --listen stdio:// }\""
-}
-
-internal fun androidCompatibleSshConfig() = DefaultSecurityProviderConfig().apply {
-    keyExchangeFactories = keyExchangeFactories.filterNot {
-        it.name.contains("curve25519", ignoreCase = true)
-    }
 }
