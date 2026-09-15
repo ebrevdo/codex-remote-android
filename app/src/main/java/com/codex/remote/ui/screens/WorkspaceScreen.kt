@@ -189,6 +189,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -617,7 +618,7 @@ private fun WorkspaceSidebar(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(Icons.Outlined.Settings, contentDescription = "连接设置", modifier = Modifier.size(18.dp))
+            Icon(Icons.Outlined.Settings, contentDescription = "Connection settings", modifier = Modifier.size(18.dp))
         }
         Spacer(Modifier.navigationBarsPadding())
     }
@@ -843,7 +844,7 @@ private fun WorkspaceContent(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         if (showMenu) {
-                            IconButton(onClick = onMenu) { Icon(Icons.Outlined.Menu, contentDescription = "打开会话") }
+                            IconButton(onClick = onMenu) { Icon(Icons.Outlined.Menu, contentDescription = "Open tasks") }
                         }
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -897,7 +898,7 @@ private fun WorkspaceContent(
                 state.models.isEmpty() -> ConnectionState(
                     icon = Icons.Outlined.ErrorOutline,
                     title = "No remote models",
-                    detail = "远端 app-server 没有返回可用模型。请检查远端 Codex 版本和模型提供方配置。",
+                    detail = "Remote Codex returned no available models. Check the remote Codex version and model provider configuration.",
                     loading = false,
                     modifier = Modifier.fillMaxSize().padding(padding),
                 )
@@ -1117,7 +1118,7 @@ internal fun groupConsecutiveCommands(timeline: List<TimelineItem>): List<Timeli
                     item = TimelineItem(
                         id = "command-group:${commands.first().id}",
                         kind = TimelineKind.COMMAND,
-                        title = "运行了多个命令",
+                        title = "Ran multiple commands",
                         body = body,
                         status = status,
                     ),
@@ -1183,7 +1184,7 @@ private fun Conversation(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    if (state.isBusy) "正在加载最近消息" else project?.name ?: "No remote Codex history",
+                    if (state.isBusy) "Loading recent messages" else project?.name ?: "No remote Codex history",
                     style = MaterialTheme.typography.headlineSmall,
                 )
                 Spacer(Modifier.height(5.dp))
@@ -1197,7 +1198,7 @@ private fun Conversation(
                     TextButton(onClick = onLoadOlderHistory) {
                         Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("加载更早消息")
+                        Text("Load earlier messages")
                     }
                 }
             }
@@ -1365,17 +1366,17 @@ private fun Conversation(
                         state.olderHistoryError != null && state.hasOlderHistory -> TextButton(onClick = requestOlderHistory) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("重试加载更早消息", maxLines = 1)
+                            Text("Retry loading earlier messages", maxLines = 1)
                         }
                         state.olderHistoryError != null -> Text(
-                            "无法继续加载更早消息",
+                            "Could not load earlier messages",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                         state.hasOlderHistory -> TextButton(onClick = requestOlderHistory) {
                             Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("加载更早消息")
+                            Text("Load earlier messages")
                         }
                     }
                 }
@@ -1427,7 +1428,7 @@ private fun Conversation(
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.onSurface,
             ) {
-                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "回到最新消息")
+                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Jump to latest message")
             }
         }
     }
@@ -1485,7 +1486,7 @@ private fun TimelineRow(item: TimelineItem, modifier: Modifier) {
                             )
                             Spacer(Modifier.width(5.dp))
                             Text(
-                                "作为目标发送",
+                                "Sent as a goal",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -1566,7 +1567,7 @@ private fun FileChangesTool(item: TimelineItem, modifier: Modifier) {
     val title = when (item.fileChanges.size) {
         0 -> item.title.ifBlank { "File changes" }
         1 -> item.fileChanges.first().path
-        else -> "已编辑 ${item.fileChanges.size} 个文件"
+        else -> "Edited ${item.fileChanges.size} files"
     }
     Surface(
         modifier = modifier.animateContentSize().testTag("file-changes-${item.id}"),
@@ -1598,7 +1599,7 @@ private fun FileChangesTool(item: TimelineItem, modifier: Modifier) {
                 }
                 Icon(
                     if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
-                    contentDescription = if (expanded) "收起文件修改" else "展开文件修改",
+                    contentDescription = if (expanded) "Collapse file changes" else "Expand file changes",
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -1736,7 +1737,7 @@ private fun ExpandableTool(
                 Spacer(Modifier.width(6.dp))
                 Icon(
                     if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
-                    contentDescription = if (expanded) "收起" else "展开",
+                    contentDescription = if (expanded) "Collapse" else "Expand",
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -2223,7 +2224,7 @@ private fun Composer(
                                 if (text.text.isEmpty()) {
                                     Text(
                                         if (goalModeActive) {
-                                            "描述你的目标，最好包含可衡量的结果"
+                                            "Describe your goal, ideally with a measurable outcome"
                                         } else {
                                             "Ask Codex"
                                         },
@@ -2351,7 +2352,7 @@ private fun Composer(
                                 enabled = state.activeTurnId != null,
                                 modifier = Modifier.size(34.dp),
                             ) {
-                                Icon(Icons.Outlined.Stop, contentDescription = "停止")
+                                Icon(Icons.Outlined.Stop, contentDescription = "Stop")
                             }
                             Spacer(Modifier.width(4.dp))
                         }
@@ -2437,7 +2438,7 @@ private fun Composer(
                             ) {
                                 Icon(
                                     Icons.AutoMirrored.Outlined.Send,
-                                    contentDescription = if (state.isTurnRunning) "追加到当前任务" else "发送",
+                                    contentDescription = if (state.isTurnRunning) "Add to running task" else "Send",
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                 )
                             }
@@ -2485,7 +2486,7 @@ private fun ComposerAddMenu(
 ) {
     Box {
         IconButton(onClick = onOpen, modifier = modifier.size(32.dp)) {
-            Icon(Icons.Outlined.Add, contentDescription = "添加", modifier = Modifier.size(20.dp))
+            Icon(Icons.Outlined.Add, contentDescription = "Add", modifier = Modifier.size(20.dp))
         }
         DropdownMenu(
             expanded = expanded,
@@ -2494,42 +2495,42 @@ private fun ComposerAddMenu(
             properties = properties,
         ) {
             Text(
-                "添加",
+                "Add",
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             AddMenuItem(
                 icon = Icons.Outlined.FolderOpen,
-                title = "文件和文件夹",
-                description = "选择远端项目中的路径",
+                title = "Files and folders",
+                description = "Choose a path in the remote project",
                 enabled = canBrowseRemoteFiles,
                 onClick = onBrowseRemoteFiles,
             )
             AddMenuItem(
                 icon = Icons.Outlined.Image,
-                title = "图片",
-                description = "从 Android 设备添加图片",
+                title = "Images",
+                description = "Add images from your Android device",
                 enabled = canAttachImage,
                 onClick = onAttachImage,
             )
             AddMenuItem(
                 icon = Icons.Outlined.Flag,
-                title = "目标",
-                description = "设置要持续追求的目标",
+                title = "Goal",
+                description = "Set a goal for Codex to keep working toward",
                 onClick = onOpenGoal,
             )
             AddMenuItem(
                 icon = Icons.AutoMirrored.Outlined.List,
-                title = "计划模式",
-                description = "开启远端计划模式",
+                title = "Plan mode",
+                description = "Enable plan mode in remote Codex",
                 enabled = planModeAvailable,
                 onClick = onPlanMode,
             )
             if (skills.isNotEmpty() || plugins.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(vertical = 4.dp))
                 Text(
-                    "技能和插件",
+                    "Skills and plugins",
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2601,7 +2602,7 @@ private fun RemotePathPickerDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("文件和文件夹") },
+        title = { Text("Files and folders") },
         text = {
             Column {
                 Text(
@@ -2625,7 +2626,7 @@ private fun RemotePathPickerDialog(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(state.remoteDirectoryError, color = MaterialTheme.colorScheme.error)
-                        TextButton(onClick = { onNavigate(currentPath) }) { Text("重试") }
+                        TextButton(onClick = { onNavigate(currentPath) }) { Text("Retry") }
                     }
                     else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
                         if (parentPath != null) {
@@ -2640,7 +2641,7 @@ private fun RemotePathPickerDialog(
                             }
                         }
                         if (state.remoteDirectoryEntries.isEmpty() && parentPath == null) {
-                            item { Text("该文件夹为空", Modifier.padding(vertical = 24.dp)) }
+                            item { Text("This folder is empty", Modifier.padding(vertical = 24.dp)) }
                         }
                     }
                 }
@@ -2648,10 +2649,10 @@ private fun RemotePathPickerDialog(
         },
         confirmButton = {
             TextButton(onClick = { onSelect(currentPath) }, enabled = !state.isRemoteDirectoryLoading) {
-                Text("选择此文件夹")
+                Text("Select this folder")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -2972,7 +2973,7 @@ private fun McpStatusDialog(
                             Column(Modifier.weight(1f)) {
                                 Text(server.name, style = MaterialTheme.typography.labelLarge)
                                 Text(
-                                    "${server.toolCount} tools · ${server.resourceCount} resources",
+                                    "Tools: ${server.toolCount} · Resources: ${server.resourceCount}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3159,7 +3160,7 @@ private fun RemoteStatusDialog(state: AppUiState, onDismiss: () -> Unit) {
                 StatusLine("Model", state.selectedModel ?: "Unknown")
                 StatusLine(
                     "Context",
-                    contextPercent?.let { "${it.toInt().coerceIn(0, 100)}% · ${usage?.totalTokens ?: 0} tokens" }
+                    contextPercent?.let { "${it.toInt().coerceIn(0, 100)}% · Tokens: ${usage?.totalTokens ?: 0}" }
                         ?: "Waiting for usage data",
                 )
                 if (state.isStatusLoading) {
@@ -3214,7 +3215,7 @@ private fun String.displayMcpAuthStatus(): String = when (this) {
 }
 
 private fun com.codex.remote.domain.RateLimitWindowSnapshot.displayRateLimit(): String {
-    val reset = resetsAt?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it * 1000)) }
+    val reset = resetsAt?.let { DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.ENGLISH).format(Date(it * 1000)) }
     return buildString {
         append("${usedPercent.toInt().coerceIn(0, 100)}% used")
         if (windowDurationMinutes != null) append(" · ${windowDurationMinutes} min")
@@ -3258,11 +3259,11 @@ internal fun permissionModeFor(
 private fun permissionModeLabel(state: AppUiState): String = when (
     permissionModeFor(state.selectedPermissionProfile, state.approvalPolicy, state.approvalsReviewer)
 ) {
-    PermissionMode.ASK -> "询问"
-    PermissionMode.AUTO_REVIEW -> "替我审批"
-    PermissionMode.FULL_ACCESS -> "完全访问"
-    PermissionMode.READ_ONLY -> "只读"
-    null -> state.selectedPermissionProfile?.removePrefix(":") ?: "询问"
+    PermissionMode.ASK -> "Ask"
+    PermissionMode.AUTO_REVIEW -> "Approve for me"
+    PermissionMode.FULL_ACCESS -> "Full access"
+    PermissionMode.READ_ONLY -> "Read only"
+    null -> state.selectedPermissionProfile?.removePrefix(":") ?: "Ask"
 }
 
 @Composable
@@ -3286,26 +3287,26 @@ private fun PermissionDropdown(
         properties = properties,
     ) {
         PermissionDropdownItem(
-            title = "询问",
-            description = "需要执行命令或修改文件时询问",
+            title = "Ask",
+            description = "Ask when a command or file change needs approval",
             selected = selectedMode == PermissionMode.ASK,
             onClick = { onSetPermissionMode(PermissionMode.ASK) },
         )
         PermissionDropdownItem(
-            title = "替我审批",
-            description = "由 Codex 自动审查需要批准的操作",
+            title = "Approve for me",
+            description = "Let Codex automatically review actions that need approval",
             selected = selectedMode == PermissionMode.AUTO_REVIEW,
             onClick = { onSetPermissionMode(PermissionMode.AUTO_REVIEW) },
         )
         PermissionDropdownItem(
-            title = "完全访问",
-            description = "无需询问即可访问远端工作区和网络",
+            title = "Full access",
+            description = "Access the remote workspace and network without asking",
             selected = selectedMode == PermissionMode.FULL_ACCESS,
             onClick = { onSetPermissionMode(PermissionMode.FULL_ACCESS) },
         )
         PermissionDropdownItem(
-            title = "只读",
-            description = "允许读取，但不允许修改远端文件",
+            title = "Read only",
+            description = "Read remote files without allowing changes",
             selected = selectedMode == PermissionMode.READ_ONLY,
             onClick = { onSetPermissionMode(PermissionMode.READ_ONLY) },
         )
@@ -3375,7 +3376,7 @@ private fun ContextUsageRing(
     IconButton(
         onClick = onClick,
         modifier = modifier.size(32.dp).semantics {
-            contentDescription = if (usage == null) "上下文用量尚不可用" else "上下文已使用 $percent%"
+            contentDescription = if (usage == null) "Context usage is not available yet" else "Context used: $percent%"
         },
     ) {
         Canvas(Modifier.size(21.dp)) {
@@ -3424,14 +3425,14 @@ private fun ModelSettingsDropdown(
         when (page) {
             ModelSettingsPage.ROOT -> {
                 ModelSettingsNavigationRow(
-                    label = "模型",
-                    value = selectedModel?.displayName ?: "未选择",
+                    label = "Model",
+                    value = selectedModel?.displayName ?: "Not selected",
                     enabled = state.models.isNotEmpty(),
                     onClick = { onPageChange(ModelSettingsPage.MODEL) },
                 )
                 ModelSettingsNavigationRow(
-                    label = "推理强度",
-                    value = state.selectedReasoningEffort?.displayEffort() ?: "默认",
+                    label = "Reasoning effort",
+                    value = state.selectedReasoningEffort?.displayEffort() ?: "Default",
                     enabled = selectedModel?.supportedReasoningEfforts?.isNotEmpty() == true,
                     onClick = { onPageChange(ModelSettingsPage.REASONING) },
                 )
@@ -3443,7 +3444,7 @@ private fun ModelSettingsDropdown(
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text("Fast", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
                                     Text(
-                                        if (state.selectedServiceTier == fastTier.id) "开启" else "关闭",
+                                        if (state.selectedServiceTier == fastTier.id) "On" else "Off",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -3461,15 +3462,15 @@ private fun ModelSettingsDropdown(
                         )
                     } else {
                         ModelSettingsNavigationRow(
-                            label = "速度",
-                            value = selectedTier?.name ?: "标准",
+                            label = "Speed",
+                            value = selectedTier?.name ?: "Standard",
                             onClick = { onPageChange(ModelSettingsPage.SERVICE_TIER) },
                         )
                     }
                 }
             }
             ModelSettingsPage.MODEL -> {
-                ModelSettingsBackRow("模型") { onPageChange(ModelSettingsPage.ROOT) }
+                ModelSettingsBackRow("Model") { onPageChange(ModelSettingsPage.ROOT) }
                 state.models.forEach { model ->
                     DropdownMenuItem(
                         text = {
@@ -3497,7 +3498,7 @@ private fun ModelSettingsDropdown(
                 }
             }
             ModelSettingsPage.REASONING -> {
-                ModelSettingsBackRow("推理强度") { onPageChange(ModelSettingsPage.ROOT) }
+                ModelSettingsBackRow("Reasoning effort") { onPageChange(ModelSettingsPage.ROOT) }
                 selectedModel?.supportedReasoningEfforts.orEmpty().forEach { effort ->
                     DropdownMenuItem(
                         text = {
@@ -3527,9 +3528,9 @@ private fun ModelSettingsDropdown(
                 }
             }
             ModelSettingsPage.SERVICE_TIER -> {
-                ModelSettingsBackRow("速度") { onPageChange(ModelSettingsPage.ROOT) }
+                ModelSettingsBackRow("Speed") { onPageChange(ModelSettingsPage.ROOT) }
                 DropdownMenuItem(
-                    text = { Text("标准") },
+                    text = { Text("Standard") },
                     onClick = {
                         onSetServiceTier(null)
                         onPageChange(ModelSettingsPage.ROOT)
@@ -3599,7 +3600,7 @@ private fun ModelSettingsNavigationRow(
 private fun ModelSettingsBackRow(title: String, onClick: () -> Unit) {
     DropdownMenuItem(
         text = { Text(title, style = MaterialTheme.typography.labelLarge) },
-        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回") },
+        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back") },
         onClick = onClick,
     )
     HorizontalDivider(Modifier.padding(horizontal = 12.dp))
@@ -3610,7 +3611,7 @@ internal fun modelSettingsSummary(
     effort: String?,
     serviceTier: String?,
 ): String = listOfNotNull(
-    modelId?.removePrefix("gpt-")?.removePrefix("GPT-") ?: "模型",
+    modelId?.removePrefix("gpt-")?.removePrefix("GPT-") ?: "Model",
     effort?.displayEffort(),
     serviceTier?.takeUnless { it.equals("standard", ignoreCase = true) },
 ).joinToString(" · ")
@@ -3665,13 +3666,13 @@ private fun GoalModeIndicator(
     ) {
         Icon(
             Icons.Outlined.Flag,
-            contentDescription = "取消目标标记",
+            contentDescription = "Remove goal marker",
             modifier = Modifier.size(15.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.width(5.dp))
         Text(
-            "目标",
+            "Goal",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -3856,7 +3857,7 @@ private fun RemoteAuthenticationState(
             Text("Sign in to remote Codex", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(6.dp))
             Text(
-                "SSH 已连接，但远端 Codex 没有可用账号。登录会发生在远端主机，完成后会自动加载模型。",
+                "SSH is connected, but remote Codex has no signed-in account. Sign-in takes place on the remote host. Available models will load automatically afterward.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -4033,7 +4034,7 @@ private fun RemoteDeviceLoginDialog(
         title = { Text("Sign in to remote Codex") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("在浏览器中打开登录页并输入设备码。完成后此窗口会自动关闭。")
+                Text("Open the sign-in page in your browser and enter the device code. This dialog will close automatically when sign-in is complete.")
                 Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(5.dp)) {
                     SelectionContainer {
                         Text(
@@ -4077,7 +4078,7 @@ private fun HostKeyConfirmationDialog(
                     }
                 }
                 Text(
-                    "请与服务器管理员或 ssh-keygen 输出核对此指纹。确认前不会发送登录凭据。",
+                    "Verify this fingerprint with your server administrator or the output of ssh-keygen. Login credentials will only be sent after you confirm.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -4090,18 +4091,18 @@ private fun HostKeyConfirmationDialog(
 
 private fun formatThreadTime(epochSeconds: Long): String {
     if (epochSeconds <= 0) return ""
-    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(epochSeconds * 1000))
+    return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT, Locale.ENGLISH).format(Date(epochSeconds * 1000))
 }
 
 private fun String.displayEffort(): String = when (lowercase()) {
-    "none" -> "无"
-    "minimal" -> "最低"
-    "low" -> "低"
-    "medium" -> "中"
-    "high" -> "高"
-    "xhigh" -> "很高"
-    "ultra" -> "极高"
-    "max" -> "最高"
+    "none" -> "None"
+    "minimal" -> "Minimal"
+    "low" -> "Low"
+    "medium" -> "Medium"
+    "high" -> "High"
+    "xhigh" -> "Extra high"
+    "ultra" -> "Ultra"
+    "max" -> "Max"
     else -> replaceFirstChar { character ->
         if (character.isLowerCase()) character.titlecase() else character.toString()
     }

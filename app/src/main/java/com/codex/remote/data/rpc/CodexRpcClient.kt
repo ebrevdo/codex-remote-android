@@ -224,10 +224,10 @@ class CodexRpcClient(
     suspend fun startDeviceLogin(): RemoteDeviceLogin {
         val result = request("account/login/start", buildJsonObject { put("type", "chatgptDeviceCode") })
         return RemoteDeviceLogin(
-            loginId = result.string("loginId") ?: throw RpcException("远端未返回登录 ID"),
+            loginId = result.string("loginId") ?: throw RpcException("The remote host returned no sign-in ID"),
             verificationUrl = result.string("verificationUrl")
-                ?: throw RpcException("远端未返回设备登录地址"),
-            userCode = result.string("userCode") ?: throw RpcException("远端未返回设备码"),
+                ?: throw RpcException("The remote host returned no device sign-in URL"),
+            userCode = result.string("userCode") ?: throw RpcException("The remote host returned no device code"),
         )
     }
 
@@ -282,7 +282,7 @@ class CodexRpcClient(
             threadGoalSetParams(threadId, objective, status, tokenBudget),
         )
         return parseThreadGoal(result["goal"] ?: JsonNull)
-            ?: throw RpcException("thread/goal/set 未返回 goal")
+            ?: throw RpcException("thread/goal/set returned no goal")
     }
 
     suspend fun clearThreadGoal(threadId: String): Boolean {
@@ -311,8 +311,8 @@ class CodexRpcClient(
                 permissionProfile,
             ),
         )
-        val threadElement = result["thread"] ?: throw RpcException("thread/fork 未返回 thread")
-        val thread = parseThread(threadElement) ?: throw RpcException("thread/fork 返回了无效 thread")
+        val threadElement = result["thread"] ?: throw RpcException("thread/fork returned no thread")
+        val thread = parseThread(threadElement) ?: throw RpcException("thread/fork returned an invalid thread")
         val threadObject = threadElement.asObject()
         return ForkedRemoteThread(
             thread = thread,
@@ -339,7 +339,7 @@ class CodexRpcClient(
     ): StartedRemoteReview {
         val result = request("review/start", reviewStartParams(threadId, targetKind, targetValue))
         return StartedRemoteReview(
-            turnId = result.obj("turn")?.string("id") ?: throw RpcException("review/start 未返回 turn.id"),
+            turnId = result.obj("turn")?.string("id") ?: throw RpcException("review/start returned no turn.id"),
             threadId = result.string("reviewThreadId") ?: threadId,
         )
     }
@@ -358,7 +358,7 @@ class CodexRpcClient(
             servers += result.array("data").mapNotNull(::parseMcpServerStatus)
             cursor = result.string("nextCursor")?.takeIf(String::isNotBlank)
             if (cursor != null && !seenCursors.add(cursor)) {
-                throw RpcException("mcpServerStatus/list 返回了重复的 nextCursor")
+                throw RpcException("mcpServerStatus/list returned a repeated cursor or exceeded the 100-page limit")
             }
         } while (cursor != null)
         return servers.distinctBy { it.name }.sortedBy { it.name.lowercase() }
@@ -385,7 +385,7 @@ class CodexRpcClient(
     suspend fun readRateLimits(): RemoteRateLimits {
         val result = request("account/rateLimits/read")
         return parseRateLimits(result["rateLimits"] ?: JsonNull)
-            ?: throw RpcException("account/rateLimits/read 未返回 rateLimits")
+            ?: throw RpcException("account/rateLimits/read returned no rateLimits")
     }
 
     suspend fun remotePathExists(path: String): Boolean = try {
@@ -415,7 +415,7 @@ class CodexRpcClient(
             threadStartParams(cwd, model, serviceTier, approvalPolicy, approvalsReviewer, permissionProfile),
         )
         return StartedRemoteThread(
-            id = result.obj("thread")?.string("id") ?: throw RpcException("thread/start 未返回 thread.id"),
+            id = result.obj("thread")?.string("id") ?: throw RpcException("thread/start returned no thread.id"),
             model = result.string("model") ?: model,
             reasoningEffort = result.string("reasoningEffort"),
             serviceTier = result.string("serviceTier") ?: serviceTier,
@@ -632,7 +632,7 @@ class CodexRpcClient(
                 if (line.isBlank()) continue
                 val message = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull()
                 if (message == null) {
-                    _events.emit(AppServerEvent.Diagnostic("无法解析 app-server 输出：$line"))
+                    _events.emit(AppServerEvent.Diagnostic("Could not parse app-server output"))
                     continue
                 }
                 val id = message["id"]?.jsonPrimitive?.contentOrNull
@@ -642,7 +642,7 @@ class CodexRpcClient(
                     if (error != null) {
                         deferred?.completeExceptionally(
                             RpcException(
-                                error.string("message") ?: "RPC 请求失败",
+                                error.string("message") ?: "RPC request failed",
                                 error["code"]?.jsonPrimitive?.longOrNull?.toInt(),
                             ),
                         )
@@ -655,13 +655,13 @@ class CodexRpcClient(
                 val params = message.obj("params") ?: buildJsonObject {}
                 if (id != null) handleServerRequest(id, method, params) else handleNotification(method, params)
             }
-            _events.emit(AppServerEvent.Failure("远端 app-server 已断开"))
+            _events.emit(AppServerEvent.Failure("Remote app-server disconnected"))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            _events.emit(AppServerEvent.Failure(error.message ?: "SSH 数据流已中断"))
+            _events.emit(AppServerEvent.Failure(error.message ?: "SSH stream interrupted"))
         } finally {
-            val error = RpcException("远端连接已关闭")
+            val error = RpcException("Remote connection closed")
             pending.values.forEach { it.completeExceptionally(error) }
             pending.clear()
         }
@@ -789,7 +789,7 @@ class CodexRpcClient(
                 val error = params.obj("error")
                 _events.emit(
                     AppServerEvent.Failure(
-                        error?.string("message") ?: "Codex turn 执行失败",
+                        error?.string("message") ?: "Codex turn failed",
                         params.string("threadId"),
                     ),
                 )
@@ -806,24 +806,24 @@ class CodexRpcClient(
             "item/commandExecution/requestApproval", "execCommandApproval" -> ApprovalRequest(
                 requestId = id,
                 kind = ApprovalKind.COMMAND,
-                title = "允许执行命令？",
-                detail = params.string("command") ?: params.string("reason") ?: "远端 Codex 请求执行命令",
+                title = "Allow command execution?",
+                detail = params.string("command") ?: params.string("reason") ?: "Remote Codex is requesting permission to run a command",
                 rawMethod = method,
                 rawParams = params.toString(),
             )
             "item/fileChange/requestApproval", "applyPatchApproval" -> ApprovalRequest(
                 requestId = id,
                 kind = ApprovalKind.FILE_CHANGE,
-                title = "允许修改文件？",
-                detail = params.string("reason") ?: params.string("grantRoot") ?: "远端 Codex 请求写入项目",
+                title = "Allow file changes?",
+                detail = params.string("reason") ?: params.string("grantRoot") ?: "Remote Codex is requesting permission to write to the project",
                 rawMethod = method,
                 rawParams = params.toString(),
             )
             "item/permissions/requestApproval" -> ApprovalRequest(
                 requestId = id,
                 kind = ApprovalKind.PERMISSION,
-                title = "允许额外权限？",
-                detail = params.string("reason") ?: "远端 Codex 请求额外文件或网络权限",
+                title = "Allow additional permissions?",
+                detail = params.string("reason") ?: "Remote Codex is requesting additional file or network permissions",
                 rawMethod = method,
                 rawParams = params.toString(),
             )
@@ -834,21 +834,21 @@ class CodexRpcClient(
                     ApprovalQuestion(
                         id = questionId,
                         header = question.string("header").orEmpty(),
-                        question = question.string("question") ?: "请输入回复",
+                        question = question.string("question") ?: "Enter a response",
                         options = question.array("options").mapNotNull { it.asObject()?.string("label") },
                     )
                 }
                 ApprovalRequest(
                     requestId = id,
                     kind = ApprovalKind.USER_INPUT,
-                    title = questions.firstOrNull()?.header?.ifBlank { null } ?: "Codex 需要你的输入",
-                    detail = questions.firstOrNull()?.question ?: "请输入回复",
+                    title = questions.firstOrNull()?.header?.ifBlank { null } ?: "Codex needs your input",
+                    detail = questions.firstOrNull()?.question ?: "Enter a response",
                     rawMethod = method,
                     rawParams = params.toString(),
                     questions = questions,
                 )
             }
-            else -> ApprovalRequest(id, ApprovalKind.UNKNOWN, "远端请求", method, method, params.toString())
+            else -> ApprovalRequest(id, ApprovalKind.UNKNOWN, "Remote request", method, method, params.toString())
         }
         _events.emit(AppServerEvent.Approval(params.string("threadId"), request))
     }
@@ -904,7 +904,7 @@ class CodexRpcClient(
         ): String? {
             val cursor = returnedCursor?.takeIf(String::isNotBlank) ?: return null
             if (cursor in consumedCursors) {
-                throw RpcException("thread/turns/list 返回了重复的 nextCursor")
+                throw RpcException("thread/turns/list returned a repeated cursor or exceeded the 100-page limit")
             }
             return cursor
         }
@@ -1313,11 +1313,11 @@ class CodexRpcClient(
                 "reasoning" -> TimelineItem(
                     id,
                     TimelineKind.REASONING,
-                    title = "思考过程",
+                    title = "Thinking",
                     body = (item.array("summary").ifEmpty { item.array("content") })
                         .joinToString("\n") { it.jsonPrimitive.contentOrNull.orEmpty() },
                 )
-                "plan" -> TimelineItem(id, TimelineKind.PLAN, title = "计划", body = item.string("text").orEmpty())
+                "plan" -> TimelineItem(id, TimelineKind.PLAN, title = "Plan", body = item.string("text").orEmpty())
                 "commandExecution" -> TimelineItem(
                     id,
                     TimelineKind.COMMAND,
@@ -1402,7 +1402,7 @@ class CodexRpcClient(
         val id = item.string("id") ?: return null
         return RemoteThread(
             id = id,
-            title = item.string("name") ?: item.string("preview")?.take(80).orEmpty().ifBlank { "新会话" },
+            title = item.string("name") ?: item.string("preview")?.take(80).orEmpty().ifBlank { "New task" },
             cwd = item.string("cwd").orEmpty(),
             updatedAt = item["updatedAt"]?.jsonPrimitive?.longOrNull ?: 0,
             isPinned = item.boolean("isPinned"),
@@ -1446,7 +1446,7 @@ internal suspend fun collectAllThreadPages(
         }
         cursor = page.nextCursor?.takeIf(String::isNotBlank)
         if (cursor != null && !usedCursors.add(cursor)) {
-            throw RpcException("thread/list 返回了重复的 nextCursor")
+            throw RpcException("thread/list returned a repeated cursor or exceeded the 100-page limit")
         }
     } while (cursor != null)
     return threadsById.values.sortedWith(compareByDescending<RemoteThread> { it.updatedAt }.thenBy { it.id })
@@ -1463,7 +1463,7 @@ internal suspend fun collectAllModelPages(
         page.models.forEach { model -> modelsById[model.id] = model }
         cursor = page.nextCursor?.takeIf(String::isNotBlank)
         if (cursor != null && !usedCursors.add(cursor)) {
-            throw RpcException("model/list 返回了重复的 nextCursor")
+            throw RpcException("model/list returned a repeated cursor or exceeded the 100-page limit")
         }
     } while (cursor != null)
     return modelsById.values.toList()

@@ -36,6 +36,13 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    // The interface always uses English, regardless of the device language.
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {

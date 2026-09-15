@@ -26,10 +26,10 @@ import java.util.concurrent.TimeUnit
 class HostKeyChangedException(
     expected: String,
     actual: String,
-) : SecurityException("SSH 主机密钥已变更。已保存 $expected，当前为 $actual")
+) : SecurityException("SSH host key changed. Saved: $expected. Received: $actual")
 
 class UnknownHostKeyException(val fingerprint: String) :
-    SecurityException("首次连接需要确认 SSH 主机指纹：$fingerprint")
+    SecurityException("Confirm the SSH host fingerprint before the first connection: $fingerprint")
 
 class RemoteCodexUnavailableException(message: String) : IllegalStateException(message)
 
@@ -176,9 +176,9 @@ class SshAppServerTransportFactory(private val context: Context) {
         if (probe.exitStatus != 0 || version == null) {
             val detail = probe.stderr.lineSequence().lastOrNull { it.isNotBlank() }
                 ?: probe.stdout.lineSequence().lastOrNull { it.isNotBlank() }
-                ?: "codex --version 未返回版本"
+                ?: "codex --version returned no version"
             throw RemoteCodexUnavailableException(
-                "远端登录 shell 找不到可用的 Codex CLI。请先在远端运行 codex --version 并完成安装。$detail",
+                "The remote login shell could not find a working Codex CLI. Install Codex on the remote host and check it with codex --version. $detail",
             )
         }
         return version.substringAfter(' ').trim()
@@ -191,7 +191,7 @@ class SshAppServerTransportFactory(private val context: Context) {
             try {
                 command.join(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 if (command.isOpen) {
-                    throw RemoteCodexUnavailableException("远端 Codex 预检超时")
+                    throw RemoteCodexUnavailableException("Remote Codex preflight check timed out")
                 }
                 ProbeResult(
                     exitStatus = command.exitStatus ?: -1,

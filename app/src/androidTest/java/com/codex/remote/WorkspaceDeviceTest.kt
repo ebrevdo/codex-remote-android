@@ -81,8 +81,8 @@ class WorkspaceDeviceTest {
 
         composeRule.onAllNodesWithText("Default", substring = true).assertCountEquals(0)
         composeRule.onAllNodesWithText("Plan", substring = true).assertCountEquals(0)
-        composeRule.onNodeWithText("5.6-sol · 极高 · Fast").assertExists()
-        composeRule.onNodeWithTag(COMPOSER_CONTEXT).assertContentDescriptionEquals("上下文已使用 64%")
+        composeRule.onNodeWithText("5.6-sol · Ultra · Fast").assertExists()
+        composeRule.onNodeWithTag(COMPOSER_CONTEXT).assertContentDescriptionEquals("Context used: 64%")
 
         val add = composeRule.onNodeWithTag(COMPOSER_ADD).fetchSemanticsNode().boundsInRoot
         val permissions = composeRule.onNodeWithTag(COMPOSER_PERMISSIONS).fetchSemanticsNode().boundsInRoot
@@ -95,7 +95,7 @@ class WorkspaceDeviceTest {
         assertTrue(model.center.x < send.center.x)
 
         composeRule.onNodeWithTag(COMPOSER_PERMISSIONS).performClick()
-        composeRule.onNodeWithText("替我审批").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Approve for me").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(PermissionMode.AUTO_REVIEW, callbacks.permissionMode) }
 
         composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("/plan")
@@ -131,7 +131,7 @@ class WorkspaceDeviceTest {
         scrollTo("timeline-tool-body-reasoning")
         composeRule.onNodeWithText("private reasoning").assertIsDisplayed()
         scrollTo("timeline-tool-body-command-group:cmd-1")
-        composeRule.onNodeWithText("运行了多个命令").assertExists()
+        composeRule.onNodeWithText("Ran multiple commands").assertExists()
         composeRule.onNodeWithText("/workspace/demo", substring = true).assertExists()
         scrollTo("timeline-tool-body-tool")
         composeRule.onNodeWithText("tool details").assertIsDisplayed()
@@ -277,7 +277,7 @@ val answer = 42
         show(state)
         composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("draft-a")
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("目标").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Goal").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag(COMPOSER_GOAL_MARKER).assertExists()
 
         composeRule.runOnIdle {
@@ -315,13 +315,13 @@ val answer = 42
         show(state, callbacks)
 
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("目标").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Goal").assertIsDisplayed().performClick()
         composeRule.onAllNodesWithText("Unsupported method", substring = true).assertCountEquals(0)
         composeRule.onNodeWithTag(COMPOSER_GOAL_MARKER).assertIsDisplayed().performClick()
         composeRule.onAllNodesWithTag(COMPOSER_GOAL_MARKER).assertCountEquals(0)
 
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("目标").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Goal").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("ship-device-tests")
         composeRule.onNodeWithTag(COMPOSER_SEND).performClick()
         composeRule.runOnIdle {
@@ -330,9 +330,9 @@ val answer = 42
         composeRule.onAllNodesWithTag(COMPOSER_GOAL_MARKER).assertCountEquals(0)
 
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("目标").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Goal").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("计划模式").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Plan mode").assertIsDisplayed().performClick()
         assertEquals("plan", callbacks.collaborationMode)
         composeRule.onAllNodesWithTag(COMPOSER_GOAL_MARKER).assertCountEquals(0)
 
@@ -385,7 +385,7 @@ val answer = 42
         show(state, callbacks)
 
         composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
-        composeRule.onNodeWithText("目标").assertIsDisplayed().performClick()
+        composeRule.onNodeWithText("Goal").assertIsDisplayed().performClick()
         composeRule.onNodeWithTag(COMPOSER_GOAL_MARKER).assertIsDisplayed()
         composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("create-thread-with-goal")
         composeRule.onNodeWithTag(COMPOSER_SEND).performClick()
@@ -393,7 +393,7 @@ val answer = 42
         composeRule.runOnIdle {
             assertEquals(listOf("create-thread-with-goal" to true), callbacks.sentMessages)
         }
-        composeRule.onAllNodesWithText("请先发送第一条消息", substring = true).assertCountEquals(0)
+        composeRule.onAllNodesWithText("Send your first message", substring = true).assertCountEquals(0)
         composeRule.onAllNodesWithTag(COMPOSER_GOAL_MARKER).assertCountEquals(0)
     }
 
@@ -410,7 +410,7 @@ val answer = 42
         show(state)
 
         composeRule.onNodeWithTag("timeline-goal-goal-message").assertExists()
-        composeRule.onNodeWithText("作为目标发送").assertExists()
+        composeRule.onNodeWithText("Sent as a goal").assertExists()
         composeRule.onAllNodesWithTag("timeline-goal-normal-message").assertCountEquals(0)
     }
 
@@ -427,9 +427,9 @@ val answer = 42
         )
         show(mutableStateOf(baseState(timeline = listOf(files))))
 
-        composeRule.onNodeWithText("已编辑 2 个文件").assertIsDisplayed()
+        composeRule.onNodeWithText("Edited 2 files").assertIsDisplayed()
         composeRule.onNodeWithText("--- a/app/src/Main.kt").assertDoesNotExist()
-        composeRule.onNodeWithText("已编辑 2 个文件").performClick()
+        composeRule.onNodeWithText("Edited 2 files").performClick()
         composeRule.onNodeWithText("app/src/Main.kt").assertExists()
         composeRule.onNodeWithText("app/src/Status.kt").assertExists()
         composeRule.onNodeWithText("Modified").assertExists()
