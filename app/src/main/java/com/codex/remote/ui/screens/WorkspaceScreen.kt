@@ -152,8 +152,13 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.codex.remote.data.security.readBytesBounded
+import com.codex.remote.data.security.reviewApproval
+import com.codex.remote.data.security.validatedBrowserUrl
+import com.codex.remote.data.security.visibleControls
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.ApprovalKind
+import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.ConnectionStatus
 import com.codex.remote.domain.ComposerMention
 import com.codex.remote.domain.ComposerMentionKind
@@ -177,7 +182,9 @@ import com.codex.remote.ui.theme.CodexGreen
 import com.codex.remote.ui.theme.DiffGreen
 import com.codex.remote.ui.theme.DiffRed
 import com.codex.remote.ui.theme.MonoText
+import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
+import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TablePlugin
@@ -231,7 +238,7 @@ fun WorkspaceScreen(
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
     onCancelLogin: () -> Unit,
-    onApproval: (String, Map<String, List<String>>) -> Unit,
+    onApproval: (ApprovalRequest, String, Map<String, List<String>>) -> Unit,
     onTrustHostKey: () -> Unit,
     onRejectHostKey: () -> Unit,
     onDismissNotice: () -> Unit,
@@ -243,13 +250,8 @@ fun WorkspaceScreen(
     var archiveTarget by remember { mutableStateOf<RemoteThread?>(null) }
     var showArchivedTasks by remember { mutableStateOf(false) }
     var deleteArchivedTarget by remember { mutableStateOf<RemoteThread?>(null) }
-    LaunchedEffect(state.mcpAuthorizationUrl) {
-        val authorizationUrl = state.mcpAuthorizationUrl ?: return@LaunchedEffect
-        try {
-            runCatching { uriHandler.openUri(authorizationUrl) }
-        } finally {
-            onMcpAuthorizationHandled()
-        }
+    state.mcpAuthorizationUrl?.let { url ->
+        ExternalLinkDialog(url, "Authorize MCP connection", onMcpAuthorizationHandled)
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -389,7 +391,7 @@ fun WorkspaceScreen(
     state.pendingApproval?.let { approval ->
         ApprovalDialog(
             approval = approval,
-            onDecision = onApproval,
+            onDecision = { decision, answers -> onApproval(approval, decision, answers) },
         )
     }
     state.pendingHostKeyFingerprint?.let { fingerprint ->
@@ -403,7 +405,11 @@ fun WorkspaceScreen(
     state.remoteDeviceLogin?.let { login ->
         RemoteDeviceLoginDialog(
             login = login,
-            onOpen = { uriHandler.openUri(login.verificationUrl) },
+            onOpen = {
+                validatedBrowserUrl(login.verificationUrl, deviceLogin = true)?.let { safe ->
+                    runCatching { uriHandler.openUri(safe) }
+                }
+            },
             onCancel = onCancelLogin,
         )
     }
@@ -1767,8 +1773,15 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val latexTextSize = with(density) { MaterialTheme.typography.bodyLarge.fontSize.toPx() }
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    pendingLink?.let { url -> ExternalLinkDialog(url, "Open external link") { pendingLink = null } }
     val markwon = remember(context, latexTextSize) {
         Markwon.builder(context)
+            .usePlugin(object : AbstractMarkwonPlugin() {
+                override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+                    builder.linkResolver { _, link -> pendingLink = link }
+                }
+            })
             .usePlugin(MarkwonInlineParserPlugin.create())
             .usePlugin(JLatexMathPlugin.create(latexTextSize) { builder -> builder.inlinesEnabled(true) })
             .usePlugin(StrikethroughPlugin.create())
@@ -1788,7 +1801,11 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
         },
         update = { textView ->
             textView.setTextColor(textColor)
-            markwon.setMarkdown(textView, rendered)
+            if (rendered.length <= 32 * 1024) {
+                markwon.setMarkdown(textView, rendered)
+            } else {
+                textView.text = rendered
+            }
         },
         modifier = modifier.fillMaxWidth(),
     )
@@ -2902,6 +2919,8 @@ private fun FeedbackDialog(
         title = { Text("Send feedback") },
         text = {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
+                Text("Your category and message are sent through the remote Codex server to its feedback service. The app requests no logs and attaches no task ID.")
+                Spacer(Modifier.height(8.dp))
                 classifications.forEach { (value, label) ->
                     Row(
                         modifier = Modifier.fillMaxWidth().selectable(
@@ -3900,13 +3919,15 @@ private fun ConnectionState(
 
 @Composable
 private fun ApprovalDialog(
-    approval: com.codex.remote.domain.ApprovalRequest,
+    approval: ApprovalRequest,
     onDecision: (String, Map<String, List<String>>) -> Unit,
 ) {
-    val answers = remember(approval.requestId) {
+    val review = remember(approval) { reviewApproval(approval) }
+    val isUserInput = approval.kind == ApprovalKind.USER_INPUT
+    val answers = remember(approval) {
         mutableStateMapOf<String, String>().apply {
             approval.questions.forEach { question ->
-                this[question.id] = question.options.firstOrNull().orEmpty()
+                this[question.id] = ""
             }
         }
     }
@@ -3920,9 +3941,12 @@ private fun ApprovalDialog(
         },
         title = { Text(approval.title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(approval.detail, style = MaterialTheme.typography.bodyMedium)
-                if (approval.kind == ApprovalKind.USER_INPUT) {
+            Column(
+                modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                review.blockedReason?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (isUserInput && review.canApprove) {
                     approval.questions.forEach { question ->
                         if (question.header.isNotBlank()) {
                             Text(question.header, style = MaterialTheme.typography.labelLarge)
@@ -3953,25 +3977,24 @@ private fun ApprovalDialog(
                 } else {
                     Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(5.dp)) {
                         SelectionContainer {
-                            Text(approval.detail, Modifier.fillMaxWidth().padding(10.dp), style = MonoText)
+                            Text(review.details, Modifier.fillMaxWidth().padding(10.dp), style = MonoText)
                         }
                     }
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                onDecision("accept", answers.mapValues { listOf(it.value) })
-            }, enabled = approval.kind != ApprovalKind.USER_INPUT || answers.values.all { it.isNotBlank() }) {
-                Text(if (approval.kind == ApprovalKind.USER_INPUT) "Send" else "Allow once")
+            val canSubmit = review.canApprove && (!isUserInput || answers.values.all { it.isNotBlank() })
+            Button(
+                onClick = { onDecision("accept", answers.mapValues { listOf(it.value) }) },
+                enabled = canSubmit,
+            ) {
+                Text(if (isUserInput) "Send" else "Allow requested action")
             }
         },
         dismissButton = {
             Row {
                 TextButton(onClick = { onDecision("decline", emptyMap()) }) { Text("Deny") }
-                if (approval.kind == ApprovalKind.COMMAND || approval.kind == ApprovalKind.FILE_CHANGE) {
-                    TextButton(onClick = { onDecision("acceptForSession", emptyMap()) }) { Text("Allow session") }
-                }
             }
         },
     )
@@ -4028,6 +4051,7 @@ private fun RemoteDeviceLoginDialog(
     onOpen: () -> Unit,
     onCancel: () -> Unit,
 ) {
+    val canOpen = validatedBrowserUrl(login.verificationUrl, deviceLogin = true) != null
     AlertDialog(
         onDismissRequest = onCancel,
         icon = { Icon(Icons.Outlined.Key, contentDescription = null) },
@@ -4044,16 +4068,23 @@ private fun RemoteDeviceLoginDialog(
                         )
                     }
                 }
+                if (!canOpen) {
+                    Text("Blocked: the remote host supplied an unexpected sign-in address.", color = MaterialTheme.colorScheme.error)
+                }
                 SelectionContainer {
                     Text(
-                        login.verificationUrl,
+                        visibleControls(login.verificationUrl),
                         style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
         },
-        confirmButton = { Button(onClick = onOpen) { Text("Open sign-in page") } },
+        confirmButton = {
+            Button(onClick = onOpen, enabled = canOpen) {
+                Text("Open sign-in page")
+            }
+        },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
     )
 }
@@ -4122,12 +4153,11 @@ private fun readComposerImageAttachment(context: Context, uri: Uri): ComposerIma
             if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) declaredSize = cursor.getLong(sizeIndex)
         }
     }
-    if (declaredSize != null && declaredSize!! > MAX_COMPOSER_IMAGE_BYTES) {
+    if (declaredSize != null && declaredSize > MAX_COMPOSER_IMAGE_BYTES) {
         throw IllegalArgumentException("Image must be 20 MB or smaller")
     }
-    val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+    val bytes = resolver.openInputStream(uri)?.use { it.readBytesBounded(MAX_COMPOSER_IMAGE_BYTES) }
         ?: throw IllegalArgumentException("Unable to read selected image")
-    if (bytes.size > MAX_COMPOSER_IMAGE_BYTES) throw IllegalArgumentException("Image must be 20 MB or smaller")
     return ComposerImageAttachment(
         displayName = displayName,
         mimeType = mimeType,
@@ -4137,3 +4167,37 @@ private fun readComposerImageAttachment(context: Context, uri: Uri): ComposerIma
 
 private const val MAX_COMPOSER_IMAGES = 4
 private const val MAX_COMPOSER_IMAGE_BYTES = 20 * 1024 * 1024
+
+@Composable
+private fun ExternalLinkDialog(rawUrl: String, title: String, onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    val safeUrl = remember(rawUrl) { validatedBrowserUrl(rawUrl) }
+    var error by remember(rawUrl) { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                Text("Opening this page shares your network address with the destination. Check the address before continuing.")
+                SelectionContainer { Text(visibleControls(rawUrl.take(8192)), style = MonoText) }
+                if (safeUrl == null) {
+                    Text("Blocked: only valid HTTPS browser links on port 443 are allowed.", color = MaterialTheme.colorScheme.error)
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = safeUrl != null,
+                onClick = {
+                    runCatching { uriHandler.openUri(requireNotNull(safeUrl)) }
+                        .onSuccess { onDismiss() }
+                        .onFailure { error = "No browser could open this address." }
+                },
+            ) {
+                Text("Open browser")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}

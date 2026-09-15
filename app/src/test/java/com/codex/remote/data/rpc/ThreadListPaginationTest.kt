@@ -114,17 +114,16 @@ class ThreadListPaginationTest {
     }
 
     @Test
-    fun feedbackUsesTheRemoteThreadAndIncludesRemoteLogs() {
+    fun feedbackSendsOnlyExplicitTextWithoutLogsOrThread() {
         val params = CodexRpcClient.feedbackUploadParams(
             classification = "bug",
             reason = "The result was incomplete",
-            threadId = "thread-1",
         )
 
         assertEquals("bug", params.getValue("classification").jsonPrimitive.content)
         assertEquals("The result was incomplete", params.getValue("reason").jsonPrimitive.content)
-        assertEquals("thread-1", params.getValue("threadId").jsonPrimitive.content)
-        assertTrue(params.getValue("includeLogs").jsonPrimitive.content.toBoolean())
+        assertFalse(params.containsKey("threadId"))
+        assertFalse(params.getValue("includeLogs").jsonPrimitive.content.toBoolean())
         assertEquals(
             "codex_remote_android",
             params.getValue("tags").jsonObject.getValue("client").jsonPrimitive.content,

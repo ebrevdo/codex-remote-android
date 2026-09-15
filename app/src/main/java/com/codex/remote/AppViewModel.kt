@@ -8,6 +8,7 @@ import com.codex.remote.data.rpc.CodexRpcClient
 import com.codex.remote.data.ssh.SshAppServerTransportFactory
 import com.codex.remote.data.ssh.UnknownHostKeyException
 import com.codex.remote.data.store.ConnectionStore
+import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ConnectionDraft
@@ -1032,10 +1033,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun submitFeedback(classification: String, reason: String) {
         val client = rpc ?: return
-        val threadId = _state.value.selectedThreadId
         viewModelScope.launch {
             _state.update { it.copy(isFeedbackSubmitting = true, feedbackError = null) }
-            runCatching { client.submitFeedback(classification, reason, threadId) }
+            runCatching { client.submitFeedback(classification, reason) }
                 .onSuccess { feedbackId ->
                     _state.update {
                         it.copy(
@@ -1171,12 +1171,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun respondToApproval(decision: String, answers: Map<String, List<String>> = emptyMap()) {
-        val approval = _state.value.pendingApproval ?: return
+    fun respondToApproval(
+        request: ApprovalRequest,
+        decision: String,
+        answers: Map<String, List<String>> = emptyMap(),
+    ) {
+        val approval = _state.value.pendingApproval?.takeIf { it === request } ?: return
         val client = rpc ?: return
         viewModelScope.launch {
             runCatching { client.respondToApproval(approval, decision, answers) }
-                .onSuccess { _state.update { it.copy(pendingApproval = null) } }
+                .onSuccess {
+                    _state.update { state ->
+                        if (state.pendingApproval === approval) {
+                            state.copy(pendingApproval = null)
+                        } else {
+                            state
+                        }
+                    }
+                }
                 .onFailure(::showError)
         }
     }
@@ -1326,6 +1338,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         eventJob?.cancel()
         eventJob = viewModelScope.launch {
             client.events.collect { event ->
+                if (rpc !== client) return@collect
                 when (event) {
                     is AppServerEvent.ItemUpsert -> upsertItem(event.threadId, event.item)
                     is AppServerEvent.AgentDelta -> appendDelta(event.threadId, event.itemId, event.delta, TimelineKind.AGENT)
@@ -1349,8 +1362,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             refreshThreads()
                         }
                     }
-                    is AppServerEvent.Approval -> _state.update { state ->
-                        if (state.acceptsThreadEvent(event.threadId)) state.copy(pendingApproval = event.request) else state
+                    is AppServerEvent.Approval -> {
+                        val state = _state.value
+                        if (state.acceptsThreadEvent(event.threadId) && state.pendingApproval == null) {
+                            _state.update { it.copy(pendingApproval = event.request) }
+                        } else {
+                            // Never overwrite a dialog the user is currently reviewing.
+                            runCatching { client.respondToApproval(event.request, "decline") }.onFailure(::showError)
+                        }
                     }
                     AppServerEvent.AccountChanged -> refreshRemoteAccount()
                     AppServerEvent.ThreadsChanged -> refreshThreads()
@@ -1441,6 +1460,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (state.acceptsThreadEvent(event.threadId)) {
                             state.copy(
                                 notice = event.message,
+                                pendingApproval = if (event.disconnected) null else state.pendingApproval,
+                                connectionStatus = if (event.disconnected) ConnectionStatus.ERROR else state.connectionStatus,
+                                connectionMessage = if (event.disconnected) event.message else state.connectionMessage,
                                 isTurnRunning = false,
                                 activeTurnId = null,
                                 timeline = state.timeline.withRunningItemsCompleted(),

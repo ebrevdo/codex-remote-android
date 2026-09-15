@@ -376,6 +376,7 @@ data class ApprovalRequest(
     val rawMethod: String,
     val rawParams: String = "{}",
     val questions: List<ApprovalQuestion> = emptyList(),
+    val rawFileChanges: String? = null,
 )
 
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, ERROR }

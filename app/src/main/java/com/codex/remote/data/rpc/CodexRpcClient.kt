@@ -4,6 +4,10 @@ import com.codex.remote.BuildConfig
 import com.codex.remote.data.ssh.ActiveSshTransport
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ApprovalQuestion
+import com.codex.remote.data.security.MAX_APPROVAL_CHARS
+import com.codex.remote.data.security.approvalResult
+import com.codex.remote.data.security.checkJsonDepth
+import com.codex.remote.data.security.readLineBounded
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.ComposerMention
 import com.codex.remote.domain.ComposerMentionKind
@@ -93,7 +97,7 @@ sealed interface AppServerEvent {
         val settings: RemoteThreadSettingsSnapshot,
     ) : AppServerEvent
     data class LoginCompleted(val success: Boolean, val error: String?) : AppServerEvent
-    data class Failure(val message: String, val threadId: String? = null) : AppServerEvent
+    data class Failure(val message: String, val threadId: String? = null, val disconnected: Boolean = false) : AppServerEvent
     data class Warning(val message: String) : AppServerEvent
     data class Diagnostic(val message: String) : AppServerEvent
 }
@@ -110,7 +114,10 @@ class CodexRpcClient(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<AppServerEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<AppServerEvent> = _events
+    @Volatile private var closed = false
     private var readerJob: Job? = null
+    private val approvals = ConcurrentHashMap<String, ApprovalRequest>()
+    private val approvalChanges = linkedMapOf<Triple<String?, String?, String>, String>()
 
     suspend fun initialize(): RemoteServerInfo {
         readerJob = scope.launch { readLoop() }
@@ -182,8 +189,8 @@ class CodexRpcClient(
             })
             profiles += result.array("data").mapNotNull(::parsePermissionProfile)
             cursor = result.string("nextCursor")?.takeIf(String::isNotBlank)
-            if (cursor != null && !seenCursors.add(cursor)) {
-                throw RpcException("permissionProfile/list returned a repeated nextCursor")
+            if (cursor != null && (!seenCursors.add(cursor) || seenCursors.size >= 100)) {
+                throw RpcException("permissionProfile/list returned a repeated cursor or exceeded the 100-page limit")
             }
         } while (cursor != null)
         return profiles.distinctBy { it.id }
@@ -357,7 +364,7 @@ class CodexRpcClient(
             })
             servers += result.array("data").mapNotNull(::parseMcpServerStatus)
             cursor = result.string("nextCursor")?.takeIf(String::isNotBlank)
-            if (cursor != null && !seenCursors.add(cursor)) {
+            if (cursor != null && (!seenCursors.add(cursor) || seenCursors.size >= 100)) {
                 throw RpcException("mcpServerStatus/list returned a repeated cursor or exceeded the 100-page limit")
             }
         } while (cursor != null)
@@ -377,8 +384,8 @@ class CodexRpcClient(
         request("config/mcpServer/reload")
     }
 
-    suspend fun submitFeedback(classification: String, reason: String, threadId: String?): String {
-        val result = request("feedback/upload", feedbackUploadParams(classification, reason, threadId))
+    suspend fun submitFeedback(classification: String, reason: String): String {
+        val result = request("feedback/upload", feedbackUploadParams(classification, reason))
         return result.string("threadId").orEmpty()
     }
 
@@ -565,33 +572,23 @@ class CodexRpcClient(
         decision: String,
         answers: Map<String, List<String>> = emptyMap(),
     ) {
-        val result = when (request.kind) {
-            ApprovalKind.USER_INPUT -> buildJsonObject {
-                put("answers", buildJsonObject {
-                    request.questions.forEach { question ->
-                        val values = answers[question.id].orEmpty()
-                        if (values.isEmpty()) return@forEach
-                        put(question.id, buildJsonObject {
-                            put("answers", buildJsonArray { values.forEach { add(JsonPrimitive(it)) } })
-                        })
-                    }
+        val result = approvalResult(request, decision, answers)
+        check(approvals.remove(request.requestId, request)) { "The approval is no longer pending" }
+        if (request.kind == ApprovalKind.UNKNOWN) {
+            send(buildJsonObject {
+                request.requestId.toLongOrNull()?.let { put("id", it) } ?: put("id", request.requestId)
+                put("error", buildJsonObject {
+                    put("code", -32601)
+                    put("message", "Unsupported remote request")
                 })
-            }
-            ApprovalKind.PERMISSION -> buildJsonObject {
-                val original = runCatching { json.parseToJsonElement(request.rawParams).jsonObject }.getOrNull()
-                put(
-                    "permissions",
-                    if (decision == "accept") original?.obj("permissions") ?: buildJsonObject {}
-                    else buildJsonObject {},
-                )
-                put("scope", if (decision == "acceptForSession") "session" else "turn")
-            }
-            else -> buildJsonObject { put("decision", decision) }
+            })
+        } else {
+            respond(request.requestId, result)
         }
-        respond(request.requestId, result)
     }
 
     suspend fun request(method: String, params: JsonObject = buildJsonObject {}): JsonObject {
+        check(!closed) { "The remote connection is closed" }
         val id = requestId.getAndIncrement().toString()
         val deferred = CompletableDeferred<JsonObject>()
         pending[id] = deferred
@@ -627,8 +624,15 @@ class CodexRpcClient(
 
     private suspend fun readLoop() {
         try {
+            var receivedChars = 0L
+            var receivedLines = 0
             while (true) {
-                val line = transport.reader.readLine() ?: break
+                val line = transport.reader.readLineBounded(4 * 1024 * 1024) ?: break
+                receivedChars += line.length
+                check(receivedChars <= 64L * 1024 * 1024 && ++receivedLines <= 100_000) {
+                    "Remote session exceeded its input limit. Reconnect to continue."
+                }
+                checkJsonDepth(line)
                 if (line.isBlank()) continue
                 val message = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull()
                 if (message == null) {
@@ -655,30 +659,49 @@ class CodexRpcClient(
                 val params = message.obj("params") ?: buildJsonObject {}
                 if (id != null) handleServerRequest(id, method, params) else handleNotification(method, params)
             }
-            _events.emit(AppServerEvent.Failure("Remote app-server disconnected"))
+            _events.emit(AppServerEvent.Failure("Remote app-server disconnected", disconnected = true))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            _events.emit(AppServerEvent.Failure(error.message ?: "SSH stream interrupted"))
+            _events.emit(AppServerEvent.Failure(error.message ?: "SSH stream interrupted", disconnected = true))
         } finally {
+            closed = true
             val error = RpcException("Remote connection closed")
             pending.values.forEach { it.completeExceptionally(error) }
             pending.clear()
+            approvals.clear()
+            approvalChanges.clear()
+            transport.close()
         }
     }
 
     private suspend fun stderrLoop() {
-        runCatching {
+        try {
+            var receivedChars = 0L
             while (true) {
-                val line = transport.errorReader.readLine() ?: break
+                val line = transport.errorReader.readLineBounded(16 * 1024) ?: break
+                receivedChars += line.length + 1
+                check(receivedChars <= 2L * 1024 * 1024) { "Remote diagnostics exceeded the session limit" }
                 if (line.isNotBlank()) _events.emit(AppServerEvent.Diagnostic(line))
             }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _events.emit(AppServerEvent.Failure(error.message ?: "Remote diagnostic stream failed", disconnected = true))
+            transport.close()
         }
     }
 
     private suspend fun handleNotification(method: String, params: JsonObject) {
         when (method) {
             "item/started", "item/completed" -> params.obj("item")?.let(::parseTimelineItem)?.let { item ->
+                if (item.kind == TimelineKind.FILE_CHANGE) {
+                    val key = Triple(params.string("threadId"), params.string("turnId"), item.id)
+                    approvalChanges.remove(key)
+                    val changes = (params.obj("item")?.get("changes") as? JsonArray)?.toString()
+                    if (changes != null && changes.length <= MAX_APPROVAL_CHARS) approvalChanges[key] = changes
+                    while (approvalChanges.size > 32) approvalChanges.remove(approvalChanges.keys.first())
+                }
                 val status = item.status.ifBlank {
                     if (method == "item/started") "inProgress" else "completed"
                 }
@@ -802,6 +825,8 @@ class CodexRpcClient(
     }
 
     private suspend fun handleServerRequest(id: String, method: String, params: JsonObject) {
+        val rawParams = params.toString()
+        check(rawParams.length <= MAX_APPROVAL_CHARS) { "Remote approval exceeds the review size limit" }
         val request = when (method) {
             "item/commandExecution/requestApproval", "execCommandApproval" -> ApprovalRequest(
                 requestId = id,
@@ -809,7 +834,7 @@ class CodexRpcClient(
                 title = "Allow command execution?",
                 detail = params.string("command") ?: params.string("reason") ?: "Remote Codex is requesting permission to run a command",
                 rawMethod = method,
-                rawParams = params.toString(),
+                rawParams = rawParams,
             )
             "item/fileChange/requestApproval", "applyPatchApproval" -> ApprovalRequest(
                 requestId = id,
@@ -817,7 +842,10 @@ class CodexRpcClient(
                 title = "Allow file changes?",
                 detail = params.string("reason") ?: params.string("grantRoot") ?: "Remote Codex is requesting permission to write to the project",
                 rawMethod = method,
-                rawParams = params.toString(),
+                rawParams = rawParams,
+                rawFileChanges = approvalChanges.remove(
+                    Triple(params.string("threadId"), params.string("turnId"), params.string("itemId").orEmpty()),
+                ),
             )
             "item/permissions/requestApproval" -> ApprovalRequest(
                 requestId = id,
@@ -825,7 +853,7 @@ class CodexRpcClient(
                 title = "Allow additional permissions?",
                 detail = params.string("reason") ?: "Remote Codex is requesting additional file or network permissions",
                 rawMethod = method,
-                rawParams = params.toString(),
+                rawParams = rawParams,
             )
             "item/tool/requestUserInput" -> {
                 val questions = params.array("questions").mapNotNull { element ->
@@ -844,11 +872,14 @@ class CodexRpcClient(
                     title = questions.firstOrNull()?.header?.ifBlank { null } ?: "Codex needs your input",
                     detail = questions.firstOrNull()?.question ?: "Enter a response",
                     rawMethod = method,
-                    rawParams = params.toString(),
+                    rawParams = rawParams,
                     questions = questions,
                 )
             }
-            else -> ApprovalRequest(id, ApprovalKind.UNKNOWN, "Remote request", method, method, params.toString())
+            else -> ApprovalRequest(id, ApprovalKind.UNKNOWN, "Remote request", method, method, rawParams)
+        }
+        check(approvals.size < 32 && approvals.putIfAbsent(id, request) == null) {
+            "Too many pending or duplicate remote approval requests"
         }
         _events.emit(AppServerEvent.Approval(params.string("threadId"), request))
     }
@@ -903,7 +934,7 @@ class CodexRpcClient(
             consumedCursors: Set<String>,
         ): String? {
             val cursor = returnedCursor?.takeIf(String::isNotBlank) ?: return null
-            if (cursor in consumedCursors) {
+            if (cursor in consumedCursors || consumedCursors.size >= 100) {
                 throw RpcException("thread/turns/list returned a repeated cursor or exceeded the 100-page limit")
             }
             return cursor
@@ -954,12 +985,10 @@ class CodexRpcClient(
         internal fun feedbackUploadParams(
             classification: String,
             reason: String,
-            threadId: String?,
         ): JsonObject = buildJsonObject {
             put("classification", classification)
             reason.trim().takeIf(String::isNotEmpty)?.let { put("reason", it) }
-            threadId?.let { put("threadId", it) }
-            put("includeLogs", true)
+            put("includeLogs", false)
             put("tags", buildJsonObject { put("client", "codex_remote_android") })
         }
 
@@ -1416,6 +1445,7 @@ class CodexRpcClient(
     }
 
     override fun close() {
+        closed = true
         readerJob?.cancel()
         scope.cancel()
         transport.close()
@@ -1445,7 +1475,7 @@ internal suspend fun collectAllThreadPages(
             if (current == null || thread.updatedAt >= current.updatedAt) threadsById[thread.id] = thread
         }
         cursor = page.nextCursor?.takeIf(String::isNotBlank)
-        if (cursor != null && !usedCursors.add(cursor)) {
+        if (cursor != null && (!usedCursors.add(cursor) || usedCursors.size >= 100)) {
             throw RpcException("thread/list returned a repeated cursor or exceeded the 100-page limit")
         }
     } while (cursor != null)
@@ -1462,7 +1492,7 @@ internal suspend fun collectAllModelPages(
         val page = loadPage(cursor)
         page.models.forEach { model -> modelsById[model.id] = model }
         cursor = page.nextCursor?.takeIf(String::isNotBlank)
-        if (cursor != null && !usedCursors.add(cursor)) {
+        if (cursor != null && (!usedCursors.add(cursor) || usedCursors.size >= 100)) {
             throw RpcException("model/list returned a repeated cursor or exceeded the 100-page limit")
         }
     } while (cursor != null)
