@@ -1,0 +1,156 @@
+{
+  "status": "security hardening, English localization, and simplification implemented; strict build validation and personal APK signing passed",
+  "validated_at_utc": "2026-09-15T18:07:15.565646+00:00",
+  "base_tag": "v0.1.2",
+  "base_commit": "372581ad5cc66677d5322a9a447a03277d36ce15",
+  "branch": "security-hardening",
+  "locally_modified": true,
+  "toolchain": {
+    "jdk": "17.0.20",
+    "gradle": "9.4.1",
+    "android_platform": 35,
+    "android_build_tools": "36.0.0"
+  },
+  "tasks_passed": [
+    "testDebugUnitTest",
+    "lintDebug",
+    "assembleRelease",
+    "assembleDebugAndroidTest"
+  ],
+  "unit_tests": {
+    "tests": 78,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lint": {
+    "errors": 0,
+    "warnings": 19,
+    "warning_ids": {
+      "OldTargetApi": 1,
+      "AndroidGradlePluginVersion": 1,
+      "GradleDependency": 10,
+      "NewerVersionAvailable": 4,
+      "TrustAllX509TrustManager": 1,
+      "ObsoleteSdkInt": 1,
+      "NotShrinkingResources": 1
+    }
+  },
+  "dependency_verification": "strict; no verification-writing flags in final builds",
+  "dependency_advisory_audit": {
+    "database": "OSV",
+    "component_versions_checked": 560,
+    "findings": [],
+    "coverage_limit": "No-match reports do not establish absence of vulnerabilities."
+  },
+  "runtime_source_archives": {
+    "binary_artifacts": 85,
+    "source_archives_available": 85,
+    "source_to_binary_reproduction": false
+  },
+  "critical_artifact_signatures": [
+    {
+      "artifact": "bcprov-jdk18on-1.86.jar",
+      "sha256": "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f",
+      "signer_fingerprint": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0",
+      "verified": true,
+      "matches_gradle_sha256_pin": true
+    },
+    {
+      "artifact": "bcpkix-jdk18on-1.86.jar",
+      "sha256": "8d8b41a4b149bdae8d331f059a578870954d1e3ff29f8269a9eb3ee19a7e4ef7",
+      "signer_fingerprint": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0",
+      "verified": true,
+      "matches_gradle_sha256_pin": true
+    },
+    {
+      "artifact": "bcutil-jdk18on-1.86.jar",
+      "sha256": "1c268e15f785aafb1e4670d8d6e5f856f69475e96c162dadcd1ff9b350e9139f",
+      "signer_fingerprint": "7B121B76A7ED6CE6E60AD51784E913A8E3A748C0",
+      "verified": true,
+      "matches_gradle_sha256_pin": true
+    },
+    {
+      "artifact": "sshj-0.40.0.jar",
+      "sha256": "a6a5533f6580e0418dfcacbb5396680186698585c325fa950c788e749f24d1e2",
+      "signer_fingerprint": "B200B4AA914DE0340741F598EBE906E1F4ACA3B7",
+      "verified": true,
+      "matches_gradle_sha256_pin": true
+    }
+  ],
+  "signing_key_sources": {
+    "bc_maven_public_key.asc": "https://downloads.bouncycastle.org/java/bc_maven_public_key.asc",
+    "hierynomus.gpg": "https://github.com/hierynomus.gpg"
+  },
+  "release_assertions": {
+    "unused_bouncycastle_est_and_dane_classes_discarded": true
+  },
+  "apk": {
+    "path": "app/build/outputs/apk/release/app-release-unsigned.apk",
+    "sha256": "0f9ba1d0f0b9706d06bdf714bb2d887d977bd99ebfb74d17e9c91791660a9ebf",
+    "bytes": 3616640,
+    "package": "com.codex.remote",
+    "version_name": "0.1.2",
+    "version_code": 3,
+    "min_sdk": 26,
+    "target_sdk": 35,
+    "signed": false,
+    "requires_signing_before_installation": true
+  },
+  "input_manifest_sha256": {
+    "gradle/verification-metadata.xml": "32eb369aec298c425ca9d52df314fb8eab447f1b0926e423b8fe08ad2a338b65",
+    "app/gradle.lockfile": "acf2b2809561253076d2ecf56cc8fdb92055d2eb4491abd3d47f73eae4d42db1",
+    "buildscript-gradle.lockfile": "e1261e9344090b30d934b4192f847babb80fc4e3bf8bdc5e3f824b0481643024",
+    "gradle/security-versions.properties": "a52bbd472254f98d0605ee36796f1dc07d20b6dd4f8f1379c588e9fc66ae89b6"
+  },
+  "not_performed": [
+    "Android device or emulator execution",
+    "Runtime traffic capture",
+    "Exhaustive dependency source audit",
+    "Source-to-binary reproduction"
+  ],
+  "trust_boundary": "The chosen SSH host and its Codex installation control remote execution and subsequent service traffic.",
+  "post_build_signing": {
+    "signed_apk": "codex-remote-signed.apk",
+    "bytes": 3643763,
+    "sha256": "a8b41a83c8ece156d2cfe9549a173e16111d0f20b1df977e6e6e1d1b5f609f0e",
+    "unsigned_input_sha256": "0f9ba1d0f0b9706d06bdf714bb2d887d977bd99ebfb74d17e9c91791660a9ebf",
+    "certificate_sha256": "208c9c2beb3217ded40a2bc3c05f43d7310c6b42e3f96c5314fe3b67e7fe14fb",
+    "signer": "CN=Personal Android Build",
+    "key_alias": "codex-remote",
+    "key_algorithm": "RSA-4096",
+    "signature_verification_passed": true,
+    "v2_signature_verified": true,
+    "v3_signature_verified": true,
+    "zip_alignment_verified": true,
+    "upstream_publisher_signature": false,
+    "device_installation_performed": false,
+    "all_original_zip_entry_contents_unchanged": true
+  },
+  "simplification": {
+    "status": "completed and validated",
+    "review_groups": [
+      "security/RPC/SSH",
+      "UI/localization",
+      "build/tooling/documentation"
+    ],
+    "separate_subagents": 3,
+    "source_files_changed": [
+      "app/src/main/java/com/codex/remote/AppViewModel.kt",
+      "app/src/main/java/com/codex/remote/data/rpc/CodexRpcClient.kt",
+      "app/src/main/java/com/codex/remote/data/security/ApprovalReview.kt",
+      "app/src/main/java/com/codex/remote/ui/screens/WorkspaceScreen.kt",
+      "tools/audit_dependencies.py",
+      "tools/mock_ssh_app_server.py",
+      "tools/real_ssh_codex_bridge.py",
+      "tools/verify_build_pins.py"
+    ],
+    "approval_differential_payloads_passed": 7136,
+    "python_differential_checks_passed": 24,
+    "dependency_and_build_policy_unchanged": true,
+    "gradle_build_used_offline_dependencies": true,
+    "same_apk_signing_certificate": true,
+    "live_ssh_helper_integration_performed": false,
+    "device_tests_executed": false
+  }
+}

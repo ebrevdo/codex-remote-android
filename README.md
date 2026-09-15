@@ -48,8 +48,14 @@ endorsed by OpenAI. Codex and OpenAI are trademarks of their respective owner.
 
 ## Build
 
+This working branch contains security hardening and an English interface.
+The release build, JVM tests, Android lint and strict dependency verification
+have passed. Read [SECURITY.md](SECURITY.md) for the changes, validation evidence
+and remaining device-testing limits. Releases are unsigned unless signing
+credentials are supplied.
+
 Open this directory in Android Studio, or run `./gradlew assembleDebug` with
-JDK 17 and Android SDK 35 installed.
+JDK 17, Android SDK platform 35 and Build Tools 36.0.0 installed.
 
 Run the device-side regression suite on a connected emulator or Android device:
 

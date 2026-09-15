@@ -45,7 +45,7 @@ JSONL transport over SSH stdin/stdout
    +-- model/list (all cursor pages)
    +-- skills/list, plugin/installed, mcpServerStatus/list
    +-- mcpServer/oauth/login, config/mcpServer/reload
-   +-- feedback/upload (remote thread id and remote logs)
+   +-- feedback/upload (explicit category/message; includeLogs=false; no thread ID)
    +-- item and turn streaming notifications
    +-- command, file-change, permission and user-input approvals
 ```
@@ -105,8 +105,12 @@ whose OAuth provider redirects to loopback must configure a reachable
 ## Compatibility boundary
 
 The app uses stable app-server methods and tolerant JSON parsing. Unknown item
-types are ignored, while unknown server-initiated requests are surfaced rather
-than automatically approved. Because schemas are tied to the installed Codex
+types are ignored. Unknown server-initiated requests can only be rejected.
+Approvals display the validated payload, command/cwd, permissions, and matching
+file diffs. Unknown permission fields, missing details, and persistent write
+root grants cannot be approved. Additional permissions are limited to one turn.
+A dialog is bound to the exact request object and connection; a second request
+cannot replace an open dialog. Because schemas are tied to the installed Codex
 version, the Android protocol layer should be tested whenever the remote Codex
 installation is upgraded across major protocol changes.
 
