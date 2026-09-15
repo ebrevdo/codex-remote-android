@@ -72,10 +72,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
         buildConfig = true
@@ -89,6 +85,15 @@ android {
             "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
         )
     }
+}
+
+kotlin {
+    compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+    lockMode.set(org.gradle.api.artifacts.dsl.LockMode.STRICT)
 }
 
 dependencies {
@@ -108,8 +113,11 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-    implementation("com.hierynomus:sshj:0.39.0")
-    implementation("org.slf4j:slf4j-nop:2.0.13")
+    implementation("com.hierynomus:sshj:0.40.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
+    implementation("org.bouncycastle:bcutil-jdk18on:1.86")
+    implementation("org.slf4j:slf4j-nop:2.0.17")
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:inline-parser:4.6.2")
     implementation("io.noties.markwon:ext-latex:4.6.2")
