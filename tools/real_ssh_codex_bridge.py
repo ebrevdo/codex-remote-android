@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
+import hmac
+import ipaddress
 import json
 import os
 import shutil
@@ -30,9 +33,17 @@ class EventLog:
         self.lock = threading.Lock()
 
     def write(self, event: str, **details: Any) -> None:
-        record = {"time": time.time(), "event": event, **details}
+        # Protocol bodies, shell text, usernames, and exception strings may contain secrets.
+        safe_details = {
+            key: value
+            for key, value in details.items()
+            if key in {"accepted", "channel_id", "exit_status", "host", "port", "fingerprint"}
+        }
+        record = {"time": time.time(), "event": event, **safe_details}
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":"))
         with self.lock:
+            if self.path.exists() and self.path.stat().st_size >= 1024 * 1024:
+                self.path.write_text("", encoding="utf-8")
             with self.path.open("a", encoding="utf-8") as stream:
                 stream.write(line + "\n")
         print(line, flush=True)
@@ -50,7 +61,10 @@ class BridgeSshServer(paramiko.ServerInterface):
         return "password"
 
     def check_auth_password(self, username: str, password: str) -> int:
-        accepted = username == self.username and password == self.password
+        accepted = (
+            hmac.compare_digest(username.encode(), self.username.encode())
+            and hmac.compare_digest(password.encode(), self.password.encode())
+        )
         self.events.write("auth_password", username=username, accepted=accepted)
         return paramiko.AUTH_SUCCESSFUL if accepted else paramiko.AUTH_FAILED
 
@@ -83,9 +97,11 @@ def host_fingerprint(key: paramiko.PKey) -> str:
 
 def load_or_create_host_key(path: Path) -> paramiko.RSAKey:
     if path.exists():
+        path.chmod(0o600)
         return paramiko.RSAKey.from_private_key_file(str(path))
     key = paramiko.RSAKey.generate(2048)
     key.write_private_key_file(str(path))
+    path.chmod(0o600)
     return key
 
 
@@ -250,6 +266,10 @@ def handle_client(
             channel = transport.accept(1)
             if channel is None:
                 continue
+            workers = [worker for worker in workers if worker.is_alive()]
+            if len(workers) >= 4:
+                channel.close()
+                continue
             worker = threading.Thread(
                 target=handle_channel,
                 args=(channel, server, node, codex_js, events),
@@ -273,17 +293,33 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=22223)
-    parser.add_argument("--username", default="codex-real")
-    parser.add_argument("--password", default="codex-real")
+    parser.add_argument("--username", required=True)
+    parser.add_argument(
+        "--password-env",
+        help="Environment variable containing the password; otherwise prompt securely",
+    )
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--node", type=Path, default=default_node)
     parser.add_argument("--codex-js", type=Path, default=default_codex_js)
     args = parser.parse_args()
+    try:
+        if not ipaddress.ip_address(args.host).is_loopback:
+            parser.error("This development helper only accepts a loopback bind address")
+    except ValueError:
+        parser.error("--host must be a literal loopback IP address")
+    if args.password_env:
+        password = os.environ.get(args.password_env, "")
+    else:
+        password = getpass.getpass("SSH test password: ")
+    if not args.username.strip() or len(password) < 16:
+        parser.error("Supply a username and a password of at least 16 characters")
+    os.umask(0o077)
 
     resolve_codex_process(args.node, args.codex_js, "--version")
     args.state_dir.mkdir(parents=True, exist_ok=True)
     events_path = args.state_dir / "events.jsonl"
     events_path.write_text("", encoding="utf-8")
+    events_path.chmod(0o600)
     events = EventLog(events_path)
     host_key = load_or_create_host_key(args.state_dir / "host_rsa_key")
 
@@ -299,21 +335,25 @@ def main() -> None:
         fingerprint=host_fingerprint(host_key),
         codex_js=str(args.codex_js),
     )
+    slots = threading.BoundedSemaphore(4)
+
+    def limited_client(client: socket.socket, peer: tuple[str, int]) -> None:
+        try:
+            handle_client(
+                client, peer, host_key, args.username, password, args.node, args.codex_js, events
+            )
+        finally:
+            slots.release()
+
     try:
         while True:
             client, peer = listener.accept()
+            if not slots.acquire(blocking=False):
+                client.close()
+                continue
             threading.Thread(
-                target=handle_client,
-                args=(
-                    client,
-                    peer,
-                    host_key,
-                    args.username,
-                    args.password,
-                    args.node,
-                    args.codex_js,
-                    events,
-                ),
+                target=limited_client,
+                args=(client, peer),
                 daemon=True,
             ).start()
     except KeyboardInterrupt:

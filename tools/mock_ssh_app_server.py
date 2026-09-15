@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import argparse
 import base64
+import getpass
 import hashlib
+import hmac
+import ipaddress
 import json
+import os
 import socket
 import threading
 import time
@@ -49,9 +53,17 @@ class EventLog:
         self.lock = threading.Lock()
 
     def write(self, event: str, **details: Any) -> None:
-        record = {"time": time.time(), "event": event, **details}
+        # Protocol bodies, shell text, usernames, and exception strings may contain secrets.
+        safe_details = {
+            key: value
+            for key, value in details.items()
+            if key in {"accepted", "channel_id", "exit_status", "host", "port", "fingerprint"}
+        }
+        record = {"time": time.time(), "event": event, **safe_details}
         line = json.dumps(record, ensure_ascii=True, separators=(",", ":"))
         with self.lock:
+            if self.path.exists() and self.path.stat().st_size >= 1024 * 1024:
+                self.path.write_text("", encoding="utf-8")
             with self.path.open("a", encoding="utf-8") as stream:
                 stream.write(line + "\n")
         print(line, flush=True)
@@ -69,7 +81,10 @@ class MockSshServer(paramiko.ServerInterface):
         return "password"
 
     def check_auth_password(self, username: str, password: str) -> int:
-        accepted = username == self.username and password == self.password
+        accepted = (
+            hmac.compare_digest(username.encode(), self.username.encode())
+            and hmac.compare_digest(password.encode(), self.password.encode())
+        )
         self.events.write("auth_password", username=username, accepted=accepted)
         return paramiko.AUTH_SUCCESSFUL if accepted else paramiko.AUTH_FAILED
 
@@ -134,6 +149,9 @@ class MockAppServer:
             if not chunk:
                 break
             self.buffer += chunk
+            if len(self.buffer) > 4 * 1024 * 1024:
+                self.channel.close()
+                return
             while b"\n" in self.buffer:
                 raw, self.buffer = self.buffer.split(b"\n", 1)
                 if not raw.strip():
@@ -439,7 +457,7 @@ class MockAppServer:
                 {
                     "id": 9001,
                     "method": "item/commandExecution/requestApproval",
-                    "params": {"command": "git status --short", "reason": "Verify Android approval UI"},
+                    "params": {"command": "git status --short", "cwd": "/workspace/demo", "reason": "Verify Android approval UI"},
                 }
             )
             return
@@ -631,9 +649,11 @@ def host_fingerprint(key: paramiko.PKey) -> str:
 
 def load_or_create_host_key(path: Path) -> paramiko.RSAKey:
     if path.exists():
+        path.chmod(0o600)
         return paramiko.RSAKey.from_private_key_file(str(path))
     key = paramiko.RSAKey.generate(2048)
     key.write_private_key_file(str(path))
+    path.chmod(0o600)
     return key
 
 
@@ -690,16 +710,32 @@ def handle_client(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=22222)
-    parser.add_argument("--username", default="codex-test")
-    parser.add_argument("--password", default="codex-test")
+    parser.add_argument("--username", required=True)
+    parser.add_argument(
+        "--password-env",
+        help="Environment variable containing the password; otherwise prompt securely",
+    )
     parser.add_argument("--state-dir", type=Path, required=True)
     args = parser.parse_args()
+    try:
+        if not ipaddress.ip_address(args.host).is_loopback:
+            parser.error("This development helper only accepts a loopback bind address")
+    except ValueError:
+        parser.error("--host must be a literal loopback IP address")
+    if args.password_env:
+        password = os.environ.get(args.password_env, "")
+    else:
+        password = getpass.getpass("SSH test password: ")
+    if not args.username.strip() or len(password) < 16:
+        parser.error("Supply a username and a password of at least 16 characters")
+    os.umask(0o077)
 
     args.state_dir.mkdir(parents=True, exist_ok=True)
     events_path = args.state_dir / "events.jsonl"
     events_path.write_text("", encoding="utf-8")
+    events_path.chmod(0o600)
     events = EventLog(events_path)
     host_key = load_or_create_host_key(args.state_dir / "host_rsa_key")
 
@@ -714,12 +750,23 @@ def main() -> None:
         username=args.username,
         fingerprint=host_fingerprint(host_key),
     )
+    slots = threading.BoundedSemaphore(4)
+
+    def limited_client(client: socket.socket, peer: tuple[str, int]) -> None:
+        try:
+            handle_client(client, peer, host_key, args.username, password, events)
+        finally:
+            slots.release()
+
     try:
         while True:
             client, peer = listener.accept()
+            if not slots.acquire(blocking=False):
+                client.close()
+                continue
             threading.Thread(
-                target=handle_client,
-                args=(client, peer, host_key, args.username, args.password, events),
+                target=limited_client,
+                args=(client, peer),
                 daemon=True,
             ).start()
     except KeyboardInterrupt:
