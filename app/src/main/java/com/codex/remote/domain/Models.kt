@@ -46,6 +46,18 @@ data class ConnectionDraft(
     val appServerMode: AppServerMode = AppServerMode.SESSION,
 )
 
+internal fun SavedConnection?.toDraft(): ConnectionDraft = if (this == null) ConnectionDraft() else ConnectionDraft(
+    id = id,
+    name = name,
+    host = host,
+    port = port.toString(),
+    username = username,
+    authType = authType,
+    hostKeyFingerprint = hostKeyFingerprint,
+    platform = platform,
+    appServerMode = appServerMode,
+)
+
 internal enum class ConnectionDraftIssue {
     CONNECTION_NAME,
     HOST,
@@ -448,6 +460,8 @@ data class AppUiState(
     val showConnections: Boolean = false,
     val showConnectionEditor: Boolean = false,
     val editingConnection: SavedConnection? = null,
+    // Retained in the ViewModel only; never serialize unsaved credentials into saved state.
+    val connectionDraft: ConnectionDraft? = null,
     val isBusy: Boolean = false,
     val notice: String? = null,
 )

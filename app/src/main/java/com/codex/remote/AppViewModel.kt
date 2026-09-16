@@ -11,6 +11,7 @@ import com.codex.remote.data.store.ConnectionStore
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.ApprovalKind
+import com.codex.remote.domain.toDraft
 import com.codex.remote.domain.ConnectionDraft
 import com.codex.remote.domain.ConnectionStatus
 import com.codex.remote.domain.ComposerMention
@@ -89,14 +90,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun showConnections(show: Boolean = true) = _state.update {
-        it.copy(showConnections = show, showConnectionEditor = false, editingConnection = null)
+        it.copy(showConnections = show, showConnectionEditor = false, editingConnection = null, connectionDraft = null)
     }
 
     fun editConnection(connection: SavedConnection? = null) = _state.update {
-        it.copy(showConnections = true, showConnectionEditor = true, editingConnection = connection, notice = null)
+        it.copy(
+            showConnections = true,
+            showConnectionEditor = true,
+            editingConnection = connection,
+            connectionDraft = connection.toDraft(),
+            notice = null,
+        )
     }
 
-    fun closeEditor() = _state.update { it.copy(showConnectionEditor = false, editingConnection = null) }
+    fun updateConnectionDraft(draft: ConnectionDraft) = _state.update {
+        if (it.showConnectionEditor && !it.isBusy) it.copy(connectionDraft = draft) else it
+    }
+
+    fun closeEditor() = _state.update {
+        it.copy(showConnectionEditor = false, editingConnection = null, connectionDraft = null)
+    }
 
     fun saveConnection(draft: ConnectionDraft, connectAfterSave: Boolean) {
         viewModelScope.launch {
@@ -109,6 +122,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         isBusy = false,
                         showConnectionEditor = false,
                         editingConnection = null,
+                        connectionDraft = null,
                         showConnections = !connectAfterSave,
                     )
                 }

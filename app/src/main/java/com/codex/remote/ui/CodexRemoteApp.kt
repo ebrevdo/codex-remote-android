@@ -30,6 +30,7 @@ fun CodexRemoteApp(viewModel: AppViewModel) {
             onDelete = viewModel::deleteConnection,
             onConnect = viewModel::connect,
             onSave = viewModel::saveConnection,
+            onUpdateDraft = viewModel::updateConnectionDraft,
             onCloseEditor = viewModel::closeEditor,
             onDismissNotice = viewModel::clearNotice,
         )

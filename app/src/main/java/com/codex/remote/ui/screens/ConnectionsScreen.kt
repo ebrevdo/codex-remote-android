@@ -1,9 +1,13 @@
 package com.codex.remote.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -12,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -56,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,8 +67,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.AppServerMode
@@ -85,6 +87,7 @@ fun ConnectionsScreen(
     onDelete: (SavedConnection) -> Unit,
     onConnect: (SavedConnection) -> Unit,
     onSave: (ConnectionDraft, Boolean) -> Unit,
+    onUpdateDraft: (ConnectionDraft) -> Unit,
     onCloseEditor: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
@@ -95,6 +98,19 @@ fun ConnectionsScreen(
             snackbarHostState.showSnackbar(it)
             onDismissNotice()
         }
+    }
+
+    if (state.showConnectionEditor && state.connectionDraft != null) {
+        ConnectionEditor(
+            original = state.editingConnection,
+            draft = state.connectionDraft,
+            busy = state.isBusy,
+            snackbarHostState = snackbarHostState,
+            onDraftChange = onUpdateDraft,
+            onDismiss = onCloseEditor,
+            onSave = onSave,
+        )
+        return
     }
 
     Scaffold(
@@ -161,14 +177,6 @@ fun ConnectionsScreen(
         }
     }
 
-    if (state.showConnectionEditor) {
-        ConnectionEditor(
-            original = state.editingConnection,
-            busy = state.isBusy,
-            onDismiss = onCloseEditor,
-            onSave = onSave,
-        )
-    }
 
     pendingDelete?.let { connection ->
         AlertDialog(
@@ -283,223 +291,233 @@ private fun ConnectionRow(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ConnectionEditor(
     original: SavedConnection?,
+    draft: ConnectionDraft,
     busy: Boolean,
+    snackbarHostState: SnackbarHostState,
+    onDraftChange: (ConnectionDraft) -> Unit,
     onDismiss: () -> Unit,
     onSave: (ConnectionDraft, Boolean) -> Unit,
 ) {
-    var draft by remember(original?.id) { mutableStateOf(original.toDraft()) }
-    var attemptedSave by remember(original?.id) { mutableStateOf(false) }
+    var attemptedSave by rememberSaveable(original?.id) { mutableStateOf(false) }
     val validationIssues = draft.validationIssues(original)
     val validationIssue = validationIssues.firstOrNull()
     val submit: (Boolean) -> Unit = { connectAfterSave ->
         attemptedSave = true
         if (validationIssues.isEmpty()) onSave(draft, connectAfterSave)
     }
-    Dialog(
-        onDismissRequest = { if (!busy) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(
-            modifier = Modifier.fillMaxSize().imePadding(),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 14.dp, bottom = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+    BackHandler { if (!busy) onDismiss() }
+    Scaffold(
+        modifier = Modifier.fillMaxSize().imePadding(),
+        contentWindowInsets = WindowInsets.safeDrawing,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            TopAppBar(
+                title = { Text(if (original == null) "Add SSH host" else "Edit SSH host") },
+                navigationIcon = {
                     IconButton(onClick = onDismiss, enabled = !busy) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Close")
                     }
-                    Text(
-                        if (original == null) "Add SSH host" else "Edit SSH host",
-                        style = MaterialTheme.typography.titleLarge,
+                },
+                actions = {
+                    if (busy) CircularProgressIndicator(Modifier.padding(end = 16.dp).size(22.dp), strokeWidth = 2.dp)
+                },
+            )
+        },
+    ) { padding ->
+        Box(
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            Column(
+                modifier = Modifier.widthIn(max = 720.dp).fillMaxSize()
+                    .verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                SectionLabel("CONNECTION")
+                OutlinedTextField(
+                    enabled = !busy,
+                    value = draft.name,
+                    onValueChange = { onDraftChange(draft.copy(name = it)) },
+                    label = { Text("Display name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = attemptedSave && ConnectionDraftIssue.CONNECTION_NAME in validationIssues,
+                    supportingText = if (attemptedSave && ConnectionDraftIssue.CONNECTION_NAME in validationIssues) {
+                        { Text("Required") }
+                    } else null,
+                )
+                Text(
+                    "Projects and conversations are discovered from the remote Codex history.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SectionLabel("SSH HOST")
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        enabled = !busy,
+                        value = draft.host,
+                        onValueChange = { onDraftChange(draft.copy(host = it)) },
+                        label = { Text("Host") },
+                        placeholder = { Text("devbox.example.com") },
+                        singleLine = true,
                         modifier = Modifier.weight(1f),
+                        isError = attemptedSave && ConnectionDraftIssue.HOST in validationIssues,
+                        supportingText = if (attemptedSave && ConnectionDraftIssue.HOST in validationIssues) {
+                            { Text("Required") }
+                        } else null,
                     )
-                    if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    OutlinedTextField(
+                        enabled = !busy,
+                        value = draft.port,
+                        onValueChange = { onDraftChange(draft.copy(port = it.filter(Char::isDigit))) },
+                        label = { Text("Port") },
+                        singleLine = true,
+                        modifier = Modifier.width(104.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = attemptedSave && ConnectionDraftIssue.PORT in validationIssues,
+                        supportingText = if (attemptedSave && ConnectionDraftIssue.PORT in validationIssues) {
+                            { Text("1-65535") }
+                        } else null,
+                    )
                 }
-                HorizontalDivider()
-                Column(
-                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).widthIn(max = 720.dp)
-                        .align(Alignment.CenterHorizontally).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    SectionLabel("CONNECTION")
+                OutlinedTextField(
+                    enabled = !busy,
+                    value = draft.username,
+                    onValueChange = { onDraftChange(draft.copy(username = it)) },
+                    label = { Text("Username") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    isError = attemptedSave && ConnectionDraftIssue.USERNAME in validationIssues,
+                    supportingText = if (attemptedSave && ConnectionDraftIssue.USERNAME in validationIssues) {
+                        { Text("Required") }
+                    } else null,
+                )
+                SectionLabel("AUTHENTICATION")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        enabled = !busy,
+                        selected = draft.authType == AuthType.PASSWORD,
+                        onClick = { onDraftChange(draft.copy(authType = AuthType.PASSWORD)) },
+                        label = { Text("Password") },
+                        leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    )
+                    FilterChip(
+                        enabled = !busy,
+                        selected = draft.authType == AuthType.PRIVATE_KEY,
+                        onClick = { onDraftChange(draft.copy(authType = AuthType.PRIVATE_KEY)) },
+                        label = { Text("Private key") },
+                        leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    )
+                }
+                if (draft.authType == AuthType.PASSWORD) {
                     OutlinedTextField(
-                        value = draft.name,
-                        onValueChange = { draft = draft.copy(name = it) },
-                        label = { Text("Display name") },
+                        enabled = !busy,
+                        value = draft.password,
+                        onValueChange = { onDraftChange(draft.copy(password = it)) },
+                        label = { Text(if (original == null) "Password" else "Password (leave blank to keep)") },
+                        visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        isError = attemptedSave && ConnectionDraftIssue.CONNECTION_NAME in validationIssues,
-                        supportingText = if (attemptedSave && ConnectionDraftIssue.CONNECTION_NAME in validationIssues) {
+                        isError = attemptedSave && ConnectionDraftIssue.PASSWORD in validationIssues,
+                        supportingText = if (attemptedSave && ConnectionDraftIssue.PASSWORD in validationIssues) {
                             { Text("Required") }
                         } else null,
                     )
-                    Text(
-                        "Projects and conversations are discovered from the remote Codex history.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    SectionLabel("SSH HOST")
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = draft.host,
-                            onValueChange = { draft = draft.copy(host = it) },
-                            label = { Text("Host") },
-                            placeholder = { Text("devbox.example.com") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                            isError = attemptedSave && ConnectionDraftIssue.HOST in validationIssues,
-                            supportingText = if (attemptedSave && ConnectionDraftIssue.HOST in validationIssues) {
-                                { Text("Required") }
-                            } else null,
-                        )
-                        OutlinedTextField(
-                            value = draft.port,
-                            onValueChange = { draft = draft.copy(port = it.filter(Char::isDigit)) },
-                            label = { Text("Port") },
-                            singleLine = true,
-                            modifier = Modifier.width(104.dp),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            isError = attemptedSave && ConnectionDraftIssue.PORT in validationIssues,
-                            supportingText = if (attemptedSave && ConnectionDraftIssue.PORT in validationIssues) {
-                                { Text("1-65535") }
-                            } else null,
-                        )
-                    }
+                } else {
                     OutlinedTextField(
-                        value = draft.username,
-                        onValueChange = { draft = draft.copy(username = it) },
-                        label = { Text("Username") },
-                        singleLine = true,
+                        enabled = !busy,
+                        value = draft.privateKey,
+                        onValueChange = { onDraftChange(draft.copy(privateKey = it)) },
+                        label = { Text(if (original == null) "OpenSSH / PEM private key" else "Private key (leave blank to keep)") },
+                        minLines = 5,
+                        maxLines = 9,
                         modifier = Modifier.fillMaxWidth(),
-                        isError = attemptedSave && ConnectionDraftIssue.USERNAME in validationIssues,
-                        supportingText = if (attemptedSave && ConnectionDraftIssue.USERNAME in validationIssues) {
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        isError = attemptedSave && ConnectionDraftIssue.PRIVATE_KEY in validationIssues,
+                        supportingText = if (attemptedSave && ConnectionDraftIssue.PRIVATE_KEY in validationIssues) {
                             { Text("Required") }
                         } else null,
                     )
-                    SectionLabel("AUTHENTICATION")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        enabled = !busy,
+                        value = draft.passphrase,
+                        onValueChange = { onDraftChange(draft.copy(passphrase = it)) },
+                        label = { Text("Key passphrase (optional)") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                SectionLabel("REMOTE PLATFORM")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    RemotePlatform.entries.forEach { platform ->
                         FilterChip(
-                            selected = draft.authType == AuthType.PASSWORD,
-                            onClick = { draft = draft.copy(authType = AuthType.PASSWORD) },
-                            label = { Text("Password") },
-                            leadingIcon = { Icon(Icons.Outlined.Lock, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        )
-                        FilterChip(
-                            selected = draft.authType == AuthType.PRIVATE_KEY,
-                            onClick = { draft = draft.copy(authType = AuthType.PRIVATE_KEY) },
-                            label = { Text("Private key") },
-                            leadingIcon = { Icon(Icons.Outlined.Key, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            enabled = !busy,
+                            selected = draft.platform == platform,
+                            onClick = { onDraftChange(draft.copy(platform = platform)) },
+                            label = { Text(platform.displayName) },
                         )
                     }
-                    if (draft.authType == AuthType.PASSWORD) {
-                        OutlinedTextField(
-                            value = draft.password,
-                            onValueChange = { draft = draft.copy(password = it) },
-                            label = { Text(if (original == null) "Password" else "Password (leave blank to keep)") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            isError = attemptedSave && ConnectionDraftIssue.PASSWORD in validationIssues,
-                            supportingText = if (attemptedSave && ConnectionDraftIssue.PASSWORD in validationIssues) {
-                                { Text("Required") }
-                            } else null,
-                        )
+                }
+                SectionLabel("APP SERVER")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        enabled = !busy,
+                        selected = draft.appServerMode == AppServerMode.SESSION,
+                        onClick = { onDraftChange(draft.copy(appServerMode = AppServerMode.SESSION)) },
+                        label = { Text("Per connection") },
+                    )
+                    FilterChip(
+                        enabled = !busy,
+                        selected = draft.appServerMode == AppServerMode.DAEMON,
+                        onClick = { onDraftChange(draft.copy(appServerMode = AppServerMode.DAEMON)) },
+                        label = { Text("Background daemon") },
+                    )
+                }
+                Text(
+                    if (draft.appServerMode == AppServerMode.DAEMON) {
+                        "Starts or reuses the host's shared Codex daemon. It keeps running after you disconnect. Requires a Codex CLI with daemon and proxy support."
                     } else {
-                        OutlinedTextField(
-                            value = draft.privateKey,
-                            onValueChange = { draft = draft.copy(privateKey = it) },
-                            label = { Text(if (original == null) "OpenSSH / PEM private key" else "Private key (leave blank to keep)") },
-                            minLines = 5,
-                            maxLines = 9,
-                            modifier = Modifier.fillMaxWidth(),
-                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            isError = attemptedSave && ConnectionDraftIssue.PRIVATE_KEY in validationIssues,
-                            supportingText = if (attemptedSave && ConnectionDraftIssue.PRIVATE_KEY in validationIssues) {
-                                { Text("Required") }
-                            } else null,
-                        )
-                        OutlinedTextField(
-                            value = draft.passphrase,
-                            onValueChange = { draft = draft.copy(passphrase = it) },
-                            label = { Text("Key passphrase (optional)") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    SectionLabel("REMOTE PLATFORM")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        RemotePlatform.entries.forEach { platform ->
-                            FilterChip(
-                                selected = draft.platform == platform,
-                                onClick = { draft = draft.copy(platform = platform) },
-                                label = { Text(platform.displayName) },
-                            )
-                        }
-                    }
-                    SectionLabel("APP SERVER")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = draft.appServerMode == AppServerMode.SESSION,
-                            onClick = { draft = draft.copy(appServerMode = AppServerMode.SESSION) },
-                            label = { Text("Per connection") },
-                        )
-                        FilterChip(
-                            selected = draft.appServerMode == AppServerMode.DAEMON,
-                            onClick = { draft = draft.copy(appServerMode = AppServerMode.DAEMON) },
-                            label = { Text("Background daemon") },
-                        )
-                    }
-                    Text(
-                        if (draft.appServerMode == AppServerMode.DAEMON) {
-                            "Starts or reuses the host's shared Codex daemon. It keeps running after you disconnect. Requires a Codex CLI with daemon and proxy support."
-                        } else {
-                            "Starts a separate app server for this SSH connection."
+                        "Starts a separate app server for this SSH connection."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (draft.hostKeyFingerprint.isNotBlank()) {
+                    SectionLabel("HOST KEY")
+                    OutlinedTextField(
+                        enabled = !busy,
+                        value = draft.hostKeyFingerprint,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Pinned fingerprint") },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            TextButton(enabled = !busy, onClick = {
+                                onDraftChange(draft.copy(hostKeyFingerprint = "", clearHostKeyFingerprint = true))
+                            }) { Text("Clear") }
                         },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (draft.hostKeyFingerprint.isNotBlank()) {
-                        SectionLabel("HOST KEY")
-                        OutlinedTextField(
-                            value = draft.hostKeyFingerprint,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Pinned fingerprint") },
-                            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                            modifier = Modifier.fillMaxWidth(),
-                            trailingIcon = {
-                                TextButton(onClick = {
-                                    draft = draft.copy(hostKeyFingerprint = "", clearHostKeyFingerprint = true)
-                                }) { Text("Clear") }
-                            },
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
                 }
                 HorizontalDivider()
                 if (attemptedSave && validationIssue != null) {
                     Text(
                         validationIssue.message,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp),
-                    horizontalArrangement = Arrangement.End,
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                 ) {
                     TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
                     OutlinedButton(onClick = { submit(false) }, enabled = !busy) { Text("Save") }
-                    Spacer(Modifier.width(8.dp))
                     Button(onClick = { submit(true) }, enabled = !busy) { Text("Save & connect") }
                 }
             }
@@ -521,18 +539,6 @@ private val ConnectionDraftIssue.message: String
 private fun SectionLabel(text: String) {
     Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
-
-private fun SavedConnection?.toDraft(): ConnectionDraft = if (this == null) ConnectionDraft() else ConnectionDraft(
-    id = id,
-    name = name,
-    host = host,
-    port = port.toString(),
-    username = username,
-    authType = authType,
-    hostKeyFingerprint = hostKeyFingerprint,
-    platform = platform,
-    appServerMode = appServerMode,
-)
 
 private val RemotePlatform.displayName: String
     get() = when (this) {

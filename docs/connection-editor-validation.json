@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-15",
+  "artifact": "codex-remote-portrait-fix.apk",
+  "sha256": "ecf331e4314e080733e12d7fee265b6bb41a14b82b0cc0aba1f841bd8373aac0",
+  "certificate_sha256": "208c9c2beb3217ded40a2bc3c05f43d7310c6b42e3f96c5314fe3b67e7fe14fb",
+  "includes_daemon_transport": true,
+  "changes": [
+    "Save actions are inside the scrolling host form",
+    "Keyboard/system-bar insets applied to the full page",
+    "Narrow action and option rows wrap",
+    "Draft retained in memory across Activity recreation and cleared on successful save/cancel"
+  ],
+  "unit_tests_passed": 101,
+  "lint_errors": 0,
+  "lint_warnings": 19,
+  "android_ui_regression_tests_added": 2,
+  "android_ui_tests_executed": false,
+  "apk_payload_matches_unsigned": true
+}

@@ -37,6 +37,12 @@ tiers, permission profiles, image input, running-turn steering, Goals, context
 compaction, forks, code review, MCP status, remote skills and installed plugins.
 Task pins are stored on the remote Codex thread rather than only on Android.
 
+## Adding a host
+
+The host editor scrolls through the save actions and adjusts for the keyboard and
+system bars. Unsaved fields survive screen rotation in memory. Saving or cancelling
+clears that draft; Android process termination still discards unsaved credentials.
+
 ## Background daemon connections
 
 Edit an SSH host and select **App server → Background daemon**. The app runs
