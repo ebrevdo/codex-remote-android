@@ -1,0 +1,21 @@
+{
+  "date": "2026-09-15",
+  "artifact": "codex-remote-daemon-prototype.apk",
+  "sha256": "1706a33b07fb20376ec76d1545ea5dc52d280a84d656a6e7c560c73441f39866",
+  "certificate_sha256": "208c9c2beb3217ded40a2bc3c05f43d7310c6b42e3f96c5314fe3b67e7fe14fb",
+  "same_signing_key_as_hardened_release": true,
+  "unit_tests_passed": 101,
+  "opt_in_integration_tests_passed": 1,
+  "real_codex_cli": "0.154.0",
+  "real_ssh_server": "OpenSSH, loopback only",
+  "daemon_reused_after_disconnect": true,
+  "stdio_compatibility_passed": true,
+  "lint_errors": 0,
+  "lint_warnings": 19,
+  "dependency_components_checked": 561,
+  "osv_findings": 0,
+  "strict_offline_build_passed": true,
+  "apk_payload_matches_unsigned": true,
+  "device_tests_executed": false,
+  "macos_windows_host_integration_tested": false
+}

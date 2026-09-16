@@ -76,3 +76,32 @@ the exact inspected artifacts. No source-to-binary reproducibility claim is made
 
 OSV returned no matches for the new version or the 561-component pinned inventory
 on 2026-09-15. This is not a complete security audit of the library.
+
+## Validation
+
+On 2026-09-15, 101 regular JVM tests passed; the separately invoked real SSH
+integration test also passed. Android lint reported zero errors and 19 warnings
+(the same warnings as the hardening baseline). Release packaging and Android
+test APK assembly passed with strict dependency verification.
+
+The JVM tests include an independent WebSocket wire peer, masking, fragmentation,
+ping/pong, close handling, malformed and oversized input, empty-fragment floods,
+queue bounds, handshake/write timeouts, shell quoting and saved-host compatibility.
+
+The opt-in integration test uses real OpenSSH and Codex CLI 0.154.0 on Linux. It
+initialized and read an empty thread list through two independent SSH proxy
+connections, verified that the daemon process survived disconnect, and exercised
+the original stdio connection. It uses temporary keys and a private Codex home,
+with remote control and automatic updates disabled, then stops its own daemon.
+It does not copy or access the user's Codex history or account credentials.
+
+Run it with an installed Codex CLI, OpenSSH server/client and the usual Android
+build environment:
+
+```sh
+python3 tools/test_daemon_transport.py
+```
+
+Normal `testDebugUnitTest` runs skip this opt-in test. Android device/UI execution,
+macOS and Windows host integration, and running-turn reconnect behavior remain
+untested. PowerShell command construction has JVM coverage.

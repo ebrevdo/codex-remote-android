@@ -4,7 +4,16 @@ This working branch is based on v0.1.2, commit
 `372581ad5cc66677d5322a9a447a03277d36ce15`. It is a locally modified build, not an
 authenticated upstream release.
 
-## Validation completed on 2026-09-15
+## Daemon transport prototype
+
+The optional shared-daemon transport adds Java-WebSocket 1.6.0 with pinned JAR
+and POM checksums. Its release signatures were verified, and the updated advisory
+inventory contains 561 component/version entries with zero OSV matches.
+[Daemon transport validation](docs/DAEMON_TRANSPORT.md) describes the added bounds,
+real OpenSSH/Codex integration test, and platform/device testing limits. The
+baseline results below describe the earlier hardened release.
+
+## Hardening baseline validated on 2026-09-15
 
 The hardened app builds with strict dependency verification and
 application/test and build-plugin lockfiles. Validation used JDK 17, Gradle
