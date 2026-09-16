@@ -616,9 +616,7 @@ class CodexRpcClient(
 
     private suspend fun send(message: JsonObject) = writeMutex.withLock {
         withContext(Dispatchers.IO) {
-            transport.writer.write(json.encodeToString(JsonObject.serializer(), message))
-            transport.writer.newLine()
-            transport.writer.flush()
+            transport.writeMessage(json.encodeToString(JsonObject.serializer(), message))
         }
     }
 
@@ -627,7 +625,7 @@ class CodexRpcClient(
             var receivedChars = 0L
             var receivedLines = 0
             while (true) {
-                val line = transport.reader.readLineBounded(4 * 1024 * 1024) ?: break
+                val line = transport.readMessage() ?: break
                 receivedChars += line.length
                 check(receivedChars <= 64L * 1024 * 1024 && ++receivedLines <= 100_000) {
                     "Remote session exceeded its input limit. Reconnect to continue."

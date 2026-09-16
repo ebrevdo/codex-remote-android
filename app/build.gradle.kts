@@ -114,6 +114,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("com.hierynomus:sshj:0.40.0")
+    implementation("org.java-websocket:Java-WebSocket:1.6.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.86")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.86")
     implementation("org.bouncycastle:bcutil-jdk18on:1.86")

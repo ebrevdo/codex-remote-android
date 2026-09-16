@@ -1,7 +1,7 @@
 package com.codex.remote.data.ssh
 
 import android.content.Context
-import com.codex.remote.data.security.readBytesBounded
+import com.codex.remote.domain.AppServerMode
 import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.ConnectionSecrets
 import com.codex.remote.domain.RemotePlatform
@@ -14,14 +14,11 @@ import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.BufferedReader
-import java.io.BufferedWriter
 import java.io.Closeable
 import java.io.InputStreamReader
-import java.io.OutputStreamWriter
 import java.security.MessageDigest
 import java.security.PublicKey
 import java.util.Base64
-import java.util.concurrent.TimeUnit
 
 class HostKeyChangedException(
     expected: String,
@@ -40,15 +37,17 @@ class ActiveSshTransport internal constructor(
     val fingerprint: String,
     val remotePlatform: RemotePlatform,
     val codexVersion: String,
+    private val messages: MessageStream,
 ) : Closeable {
-    val reader: BufferedReader = BufferedReader(InputStreamReader(command.inputStream, Charsets.UTF_8))
-    val writer: BufferedWriter = BufferedWriter(OutputStreamWriter(command.outputStream, Charsets.UTF_8))
     val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
+
+    fun readMessage(): String? = messages.readMessage()
+    fun writeMessage(message: String) = messages.writeMessage(message)
 
     override fun close() {
         // Close the socket first so blocked readers/writers cannot prevent shutdown.
         runCatching { ssh.close() }
-        runCatching { writer.close() }
+        runCatching { messages.close() }
         runCatching { command.close() }
         runCatching { session.close() }
         runCatching { ssh.disconnect() }
@@ -60,7 +59,20 @@ class SshAppServerTransportFactory(private val context: Context) {
     suspend fun open(
         connection: SavedConnection,
         secrets: ConnectionSecrets,
-    ): ActiveSshTransport = withContext(Dispatchers.IO) {
+    ): ActiveSshTransport {
+        var opened: ActiveSshTransport? = null
+        try {
+            return withContext(Dispatchers.IO) {
+                openBlocking(connection, secrets).also { opened = it }
+            }
+        } catch (error: Throwable) {
+            // withContext can discard a successfully opened transport on cancellation.
+            opened?.close()
+            throw error
+        }
+    }
+
+    private fun openBlocking(connection: SavedConnection, secrets: ConnectionSecrets): ActiveSshTransport {
         // Remove key files left by older versions after a process crash.
         context.cacheDir.listFiles { file ->
             file.isFile && file.name.startsWith("codex_remote_") && file.name.endsWith(".key")
@@ -69,25 +81,10 @@ class SshAppServerTransportFactory(private val context: Context) {
         }
         var observedFingerprint = ""
         val ssh = authenticatedClient(connection, secrets) { observedFingerprint = it }
-        try {
+        return try {
             val remotePlatform = resolvePlatform(ssh, connection.platform)
             val codexVersion = readCodexVersion(ssh, remotePlatform)
-            ssh.timeout = 0
-            val session = ssh.startSession()
-            try {
-                val command = session.exec(appServerCommand(remotePlatform))
-                ActiveSshTransport(
-                    ssh = ssh,
-                    session = session,
-                    command = command,
-                    fingerprint = observedFingerprint,
-                    remotePlatform = remotePlatform,
-                    codexVersion = codexVersion,
-                )
-            } catch (error: Throwable) {
-                runCatching { session.close() }
-                throw error
-            }
+            openAppServerTransport(ssh, observedFingerprint, remotePlatform, codexVersion, connection.appServerMode)
         } catch (error: Throwable) {
             runCatching { ssh.disconnect() }
             runCatching { ssh.close() }
@@ -162,7 +159,7 @@ class SshAppServerTransportFactory(private val context: Context) {
 
     private fun resolvePlatform(ssh: SSHClient, configured: RemotePlatform): RemotePlatform {
         if (configured != RemotePlatform.AUTO) return configured
-        val probe = runCommand(ssh, "printf '__CODEX_POSIX__'")
+        val probe = runSshCommand(ssh, "printf '__CODEX_POSIX__'")
         return if (probe.exitStatus == 0 && probe.stdout.contains("__CODEX_POSIX__")) {
             RemotePlatform.POSIX
         } else {
@@ -171,7 +168,7 @@ class SshAppServerTransportFactory(private val context: Context) {
     }
 
     private fun readCodexVersion(ssh: SSHClient, platform: RemotePlatform): String {
-        val probe = runCommand(ssh, codexVersionCommand(platform))
+        val probe = runSshCommand(ssh, codexVersionCommand(platform))
         val version = probe.stdout.lineSequence()
             .map(String::trim)
             .firstOrNull { it.startsWith("codex-cli ") || it.startsWith("codex ") }
@@ -186,38 +183,6 @@ class SshAppServerTransportFactory(private val context: Context) {
         return version.substringAfter(' ').trim()
     }
 
-    private fun runCommand(ssh: SSHClient, commandLine: String): ProbeResult {
-        val session = ssh.startSession()
-        return try {
-            val command = session.exec(commandLine)
-            try {
-                command.join(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                if (command.isOpen) {
-                    throw RemoteCodexUnavailableException("Remote Codex preflight check timed out")
-                }
-                ProbeResult(
-                    exitStatus = command.exitStatus ?: -1,
-                    stdout = command.inputStream.readBytesBounded(MAX_PROBE_OUTPUT_BYTES).toString(Charsets.UTF_8),
-                    stderr = command.errorStream.readBytesBounded(MAX_PROBE_OUTPUT_BYTES).toString(Charsets.UTF_8),
-                )
-            } finally {
-                runCatching { command.close() }
-            }
-        } finally {
-            runCatching { session.close() }
-        }
-    }
-
-    private data class ProbeResult(
-        val exitStatus: Int,
-        val stdout: String,
-        val stderr: String,
-    )
-
-    companion object {
-        private const val PROBE_TIMEOUT_SECONDS = 15L
-        private const val MAX_PROBE_OUTPUT_BYTES = 64 * 1024
-    }
 }
 
 internal fun codexVersionCommand(platform: RemotePlatform): String = when (platform) {
@@ -233,4 +198,40 @@ internal fun appServerCommand(platform: RemotePlatform): String = when (platform
         "exec \"\${SHELL:-/bin/sh}\" -lc 'exec codex app-server --listen stdio://'"
     RemotePlatform.WINDOWS ->
         "powershell.exe -NoLogo -NonInteractive -Command \"& { codex app-server --listen stdio:// }\""
+}
+
+
+/** Also used by the JVM integration test with a real, authenticated SSH connection. */
+internal fun openAppServerTransport(
+    ssh: SSHClient,
+    fingerprint: String,
+    platform: RemotePlatform,
+    cliVersion: String,
+    mode: AppServerMode,
+): ActiveSshTransport {
+    val endpoint = if (mode == AppServerMode.DAEMON) {
+        val result = runSshCommand(ssh, daemonStartCommand(platform), timeoutSeconds = 60)
+        if (result.exitStatus != 0) {
+            throw RemoteCodexUnavailableException(
+                "Unable to start the Codex daemon. This mode requires daemon and proxy support. " +
+                    result.stderr.trim().takeLast(2048),
+            )
+        }
+        parseDaemonStart(result.stdout)
+    } else null
+    ssh.timeout = 0
+    val session = ssh.startSession()
+    try {
+        val command = session.exec(endpoint?.let { daemonProxyCommand(platform, it.socketPath) } ?: appServerCommand(platform))
+        val messages = if (endpoint == null) {
+            JsonLineMessageStream(command.inputStream, command.outputStream)
+        } else {
+            WebSocketMessageStream(command.inputStream, command.outputStream, { ssh.close() }).apply { connect() }
+        }
+        return ActiveSshTransport(ssh, session, command, fingerprint, platform, endpoint?.version ?: cliVersion, messages)
+    } catch (error: Throwable) {
+        runCatching { ssh.close() }
+        runCatching { session.close() }
+        throw error
+    }
 }

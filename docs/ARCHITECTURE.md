@@ -53,9 +53,19 @@ JSONL transport over SSH stdin/stdout
 Agent execution, repository access, authentication, tools and approvals remain
 owned by the remote Codex installation. Android has no local agent runtime.
 
+### Optional shared daemon
+
+The flow above describes the default **Per connection** mode. **Background daemon**
+first runs `codex app-server daemon start` on a separate bounded SSH exec channel,
+validates its lifecycle JSON, then runs `codex app-server proxy --sock <socketPath>`.
+The proxy carries WebSocket bytes over SSH to the daemon's Unix control socket.
+Java-WebSocket performs framing and the RPC client consumes whole JSON messages
+through the same transport boundary as JSONL. No local or remote TCP listener is
+created by this mode. See [daemon transport](DAEMON_TRANSPORT.md).
+
 ## Host-wide discovery
 
-A saved connection stores only SSH host, authentication and platform details.
+A saved connection stores SSH host, authentication, platform and app-server mode.
 On connection, the client requests every page of non-archived interactive
 threads with the same empty `sourceKinds` filter as Desktop. It deliberately
 omits the optional `cwd` field from `thread/list`, follows `nextCursor` until it

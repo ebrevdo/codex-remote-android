@@ -11,6 +11,9 @@ enum class AuthType { PASSWORD, PRIVATE_KEY }
 enum class RemotePlatform { AUTO, POSIX, WINDOWS }
 
 @Serializable
+enum class AppServerMode { SESSION, DAEMON }
+
+@Serializable
 data class SavedConnection(
     val id: String = UUID.randomUUID().toString(),
     val name: String,
@@ -23,6 +26,7 @@ data class SavedConnection(
     val encryptedPassphrase: String = "",
     val hostKeyFingerprint: String = "",
     val platform: RemotePlatform = RemotePlatform.AUTO,
+    val appServerMode: AppServerMode = AppServerMode.SESSION,
     val lastUsedAt: Long = 0,
 )
 
@@ -39,6 +43,7 @@ data class ConnectionDraft(
     val hostKeyFingerprint: String = "",
     val clearHostKeyFingerprint: Boolean = false,
     val platform: RemotePlatform = RemotePlatform.AUTO,
+    val appServerMode: AppServerMode = AppServerMode.SESSION,
 )
 
 internal enum class ConnectionDraftIssue {

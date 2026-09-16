@@ -6,8 +6,8 @@
 An Android client for Codex hosts reached over SSH. A saved connection represents
 one host; after connecting, the app imports every resumable remote Codex
 conversation and groups projects from each thread's working directory. The app
-does not run a local agent: it starts `codex app-server` remotely and speaks its
-JSONL protocol over SSH.
+does not run a local agent: it connects to a remote `codex app-server` over SSH.
+Each host can use a separate app server per connection or a shared background daemon.
 
 Implementation notes and the audited Codex source boundary are documented in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -36,6 +36,16 @@ The composer uses the same remote app-server surfaces for Plan mode, service
 tiers, permission profiles, image input, running-turn steering, Goals, context
 compaction, forks, code review, MCP status, remote skills and installed plugins.
 Task pins are stored on the remote Codex thread rather than only on Android.
+
+## Background daemon connections
+
+Edit an SSH host and select **App server → Background daemon**. The app runs
+`codex app-server daemon start`, then connects through `codex app-server proxy`
+using WebSocket framing over the existing SSH connection. Disconnecting leaves
+the daemon running. Existing saved hosts keep **Per connection** mode.
+
+This requires a remote Codex installation supporting both commands. See
+[daemon transport](docs/DAEMON_TRANSPORT.md) for requirements, limits, and validation.
 
 ## Install
 

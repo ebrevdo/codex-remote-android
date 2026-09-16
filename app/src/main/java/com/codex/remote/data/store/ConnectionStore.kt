@@ -58,6 +58,7 @@ class ConnectionStore(
             hostKeyFingerprint = if (draft.clearHostKeyFingerprint) ""
                 else draft.hostKeyFingerprint.ifBlank { original?.hostKeyFingerprint.orEmpty() },
             platform = draft.platform,
+            appServerMode = draft.appServerMode,
             lastUsedAt = original?.lastUsedAt ?: 0,
         )
         if (saved.authType == AuthType.PASSWORD && saved.encryptedPassword.isBlank()) {

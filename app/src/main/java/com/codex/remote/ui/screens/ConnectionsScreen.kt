@@ -67,6 +67,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.AuthType
+import com.codex.remote.domain.AppServerMode
 import com.codex.remote.domain.ConnectionDraft
 import com.codex.remote.domain.ConnectionDraftIssue
 import com.codex.remote.domain.ConnectionStatus
@@ -442,6 +443,28 @@ private fun ConnectionEditor(
                             )
                         }
                     }
+                    SectionLabel("APP SERVER")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = draft.appServerMode == AppServerMode.SESSION,
+                            onClick = { draft = draft.copy(appServerMode = AppServerMode.SESSION) },
+                            label = { Text("Per connection") },
+                        )
+                        FilterChip(
+                            selected = draft.appServerMode == AppServerMode.DAEMON,
+                            onClick = { draft = draft.copy(appServerMode = AppServerMode.DAEMON) },
+                            label = { Text("Background daemon") },
+                        )
+                    }
+                    Text(
+                        if (draft.appServerMode == AppServerMode.DAEMON) {
+                            "Starts or reuses the host's shared Codex daemon. It keeps running after you disconnect. Requires a Codex CLI with daemon and proxy support."
+                        } else {
+                            "Starts a separate app server for this SSH connection."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     if (draft.hostKeyFingerprint.isNotBlank()) {
                         SectionLabel("HOST KEY")
                         OutlinedTextField(
@@ -508,6 +531,7 @@ private fun SavedConnection?.toDraft(): ConnectionDraft = if (this == null) Conn
     authType = authType,
     hostKeyFingerprint = hostKeyFingerprint,
     platform = platform,
+    appServerMode = appServerMode,
 )
 
 private val RemotePlatform.displayName: String
