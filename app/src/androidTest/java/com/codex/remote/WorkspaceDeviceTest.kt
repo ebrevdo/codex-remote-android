@@ -308,6 +308,51 @@ val answer = 42
     }
 
     @Test
+    fun fastEmptyHistoryPageDoesNotBlockTheNextTap() {
+        val current = listOf(TimelineItem("current", TimelineKind.USER, body = "Current message"))
+        val state = mutableStateOf(baseState(timeline = current).copy(hasOlderHistory = true, olderHistoryCursor = "page-2"))
+        val callbacks = WorkspaceCallbacks()
+        callbacks.onLoadOlder = {
+            callbacks.olderLoads++
+            // A fast response can be observed without an intermediate loading frame.
+            state.value = if (callbacks.olderLoads == 1) {
+                state.value.copy(olderHistoryCursor = "page-3")
+            } else {
+                state.value.copy(
+                    timeline = (0 until 30).map { TimelineItem("older-$it", TimelineKind.USER, body = "Earlier message $it") } + current,
+                    olderHistoryCursor = null,
+                    hasOlderHistory = false,
+                )
+            }
+        }
+        show(state, callbacks)
+        composeRule.onNodeWithText("Load earlier messages").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Load earlier messages").performClick()
+        composeRule.runOnIdle { assertEquals(2, callbacks.olderLoads) }
+        composeRule.onNodeWithText("Earlier message 0").assertIsDisplayed()
+    }
+
+    @Test
+    fun emptyHistoryShowsLoadingAndTheRetryError() {
+        val state = mutableStateOf(baseState().copy(hasOlderHistory = true, olderHistoryCursor = "page-2"))
+        val callbacks = WorkspaceCallbacks()
+        callbacks.onLoadOlder = {
+            callbacks.olderLoads++
+            state.value = state.value.copy(isOlderHistoryLoading = true, olderHistoryError = null)
+        }
+        show(state, callbacks)
+        composeRule.onNodeWithText("Load earlier messages").performClick()
+        composeRule.onNodeWithText("Load earlier messages").assertDoesNotExist()
+        composeRule.runOnIdle {
+            state.value = state.value.copy(isOlderHistoryLoading = false, olderHistoryError = "Temporary history error")
+        }
+        composeRule.onNodeWithText("Temporary history error").assertIsDisplayed()
+        composeRule.onNodeWithText("Retry loading earlier messages").performClick()
+        composeRule.runOnIdle { assertEquals(2, callbacks.olderLoads) }
+    }
+
+    @Test
     fun switchingThreadsClearsDraftAndNeverShowsTheOtherTimeline() {
         val threadA = thread("thread-a", "Thread A")
         val threadB = thread("thread-b", "Thread B")

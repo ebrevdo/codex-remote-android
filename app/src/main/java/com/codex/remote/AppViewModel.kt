@@ -368,6 +368,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 activeTurnId = null,
                 isStatusLoading = false,
                 statusError = friendlyError(error),
+                isOlderHistoryLoading = false,
                 notice = friendlyError(error),
             )
         }
@@ -624,69 +625,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadOlderHistory() {
         val client = rpc ?: return
-        val snapshot = _state.value
-        val threadId = snapshot.selectedThreadId ?: return
-        val cursor = snapshot.olderHistoryCursor ?: return
-        if (!snapshot.hasOlderHistory || snapshot.isOlderHistoryLoading || snapshot.isBusy) return
-        if (cursor in snapshot.consumedHistoryCursors) {
-            _state.update {
-                it.copy(
-                    olderHistoryCursor = null,
-                    hasOlderHistory = false,
-                    olderHistoryError = "The remote host returned a repeated history cursor. Loading has stopped.",
-                )
-            }
-            return
-        }
-
-        _state.update { state ->
-            if (state.selectedThreadId == threadId && state.olderHistoryCursor == cursor) {
-                state.copy(isOlderHistoryLoading = true, olderHistoryError = null)
-            } else {
-                state
-            }
-        }
-        viewModelScope.launch {
-            val consumedCursors = snapshot.consumedHistoryCursors + cursor
-            runCatching {
-                client.loadOlderThreadHistory(threadId, cursor).let { page ->
-                    page.copy(
-                        nextCursor = CodexRpcClient.checkedNextHistoryCursor(
-                            returnedCursor = page.nextCursor,
-                            consumedCursors = consumedCursors,
-                        ),
-                    )
-                }
-            }.onSuccess { page ->
-                _state.update { state ->
-                    if (state.selectedThreadId != threadId || state.olderHistoryCursor != cursor) {
-                        return@update state
-                    }
-                    state.copy(
-                        timeline = mergeTimelineHistory(page.timeline, state.timeline),
-                        olderHistoryCursor = page.nextCursor,
-                        hasOlderHistory = page.nextCursor != null,
-                        isOlderHistoryLoading = false,
-                        olderHistoryError = null,
-                        consumedHistoryCursors = consumedCursors,
-                    )
-                }
-            }.onFailure { error ->
-                val repeatedCursor = error.message.orEmpty().contains("nextCursor", ignoreCase = true)
-                _state.update { state ->
-                    if (state.selectedThreadId != threadId || state.olderHistoryCursor != cursor) {
-                        return@update state
-                    }
-                    state.copy(
-                        olderHistoryCursor = if (repeatedCursor) null else state.olderHistoryCursor,
-                        hasOlderHistory = if (repeatedCursor) false else state.hasOlderHistory,
-                        isOlderHistoryLoading = false,
-                        olderHistoryError = friendlyError(error),
-                        consumedHistoryCursors = consumedCursors,
-                    )
-                }
-            }
-        }
+        requestOlderHistory(
+            scope = viewModelScope,
+            state = _state,
+            isCurrentConnection = { rpc === client },
+            errorMessage = ::friendlyError,
+            loadPage = client::loadOlderThreadHistory,
+        )
     }
 
     fun sendMessage(

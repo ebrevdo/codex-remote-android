@@ -110,6 +110,8 @@ sealed interface AppServerEvent {
 
 class RpcException(message: String, val code: Int? = null) : Exception(message)
 
+internal class HistoryPaginationException(message: String) : Exception(message)
+
 class CodexRpcClient(
     private val transport: AppServerTransport,
     private val requestTimeoutMillis: Long = 60_000,
@@ -459,10 +461,9 @@ class CodexRpcClient(
                 thread = thread,
                 fallbackCwd = cwd,
                 timeline = parseTurnsTimeline(initialPage.array("data")),
-                olderHistoryCursor = selectOlderHistoryCursor(
-                    initialPageCursor = initialPage.string("nextCursor"),
-                    turnsBackwardsCursor = result.string("turnsBackwardsCursor"),
-                ),
+                // A null nextCursor means this page exhausted history. The resume cursor
+                // points at the newest turn and would load this same history again.
+                olderHistoryCursor = initialPage.string("nextCursor")?.takeIf(String::isNotBlank),
             )
         }
 
@@ -967,8 +968,11 @@ class CodexRpcClient(
             consumedCursors: Set<String>,
         ): String? {
             val cursor = returnedCursor?.takeIf(String::isNotBlank) ?: return null
-            if (cursor in consumedCursors || consumedCursors.size >= 100) {
-                throw RpcException("thread/turns/list returned a repeated cursor or exceeded the 100-page limit")
+            if (cursor in consumedCursors) {
+                throw HistoryPaginationException("The remote host returned a repeated history cursor. Loading has stopped.")
+            }
+            if (consumedCursors.size >= 100) {
+                throw HistoryPaginationException("The 100-page history limit has been reached.")
             }
             return cursor
         }
@@ -1545,12 +1549,6 @@ private const val MODEL_PAGE_SIZE = 100
 private const val MCP_STATUS_PAGE_SIZE = 100
 private const val PERMISSION_PROFILE_PAGE_SIZE = 100
 internal const val THREAD_HISTORY_PAGE_SIZE = 5
-
-internal fun selectOlderHistoryCursor(
-    initialPageCursor: String?,
-    turnsBackwardsCursor: String?,
-): String? = initialPageCursor?.takeIf(String::isNotBlank)
-    ?: turnsBackwardsCursor?.takeIf(String::isNotBlank)
 
 private fun RpcException.isHistoryPaginationUnavailable(): Boolean {
     if (code == -32601 || code == -32602) return true

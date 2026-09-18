@@ -153,6 +153,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.codex.remote.canLoadOlderHistory
 import com.codex.remote.data.security.parseRemoteFileLink
 import com.codex.remote.data.security.readBytesBounded
 import com.codex.remote.data.security.reviewApproval
@@ -1117,7 +1118,12 @@ internal data class TimelinePresentationItem(
     val sourceItemIds: List<String>,
 )
 
-private data class HistoryScrollAnchor(val itemId: String, val itemOffset: Int)
+private data class HistoryScrollAnchor(
+    val itemId: String,
+    val itemOffset: Int,
+    val cursor: String,
+    val revealOlder: Boolean,
+)
 
 internal fun groupConsecutiveCommands(timeline: List<TimelineItem>): List<TimelinePresentationItem> = buildList {
     var index = 0
@@ -1168,6 +1174,37 @@ internal fun groupConsecutiveCommands(timeline: List<TimelineItem>): List<Timeli
 }
 
 @Composable
+private fun HistoryControls(state: AppUiState, onLoad: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("history-control"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        if (state.isOlderHistoryLoading) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        } else if (state.hasOlderHistory) {
+            TextButton(onClick = onLoad, enabled = state.canLoadOlderHistory) {
+                Icon(
+                    if (state.olderHistoryError == null) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.Refresh,
+                    contentDescription = null,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(if (state.olderHistoryError == null) "Load earlier messages" else "Retry loading earlier messages")
+            }
+        }
+        state.olderHistoryError?.let { message ->
+            Text(
+                message.take(500),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun Conversation(
     state: AppUiState,
     listState: LazyListState,
@@ -1188,7 +1225,8 @@ private fun Conversation(
         state.isOlderHistoryLoading ||
         state.olderHistoryError != null
 
-    fun visibleHistoryAnchor(): HistoryScrollAnchor? {
+    fun visibleHistoryAnchor(revealOlder: Boolean): HistoryScrollAnchor? {
+        val cursor = state.olderHistoryCursor ?: return null
         val firstTimelineItem = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
             item.key != HISTORY_CONTROL_KEY &&
                 item.key != WORKING_ITEM_KEY &&
@@ -1200,8 +1238,17 @@ private fun Conversation(
             ?.sourceItemIds
             ?.lastOrNull()
             ?: itemId
-        return HistoryScrollAnchor(sourceItemId, firstTimelineItem.offset)
+        return HistoryScrollAnchor(sourceItemId, firstTimelineItem.offset, cursor, revealOlder)
     }
+
+    fun requestOlderHistory(revealOlder: Boolean) {
+        if (state.canLoadOlderHistory) {
+            pendingHistoryAnchor = visibleHistoryAnchor(revealOlder)
+            onFollowLatestChange(false)
+            onLoadOlderHistory()
+        }
+    }
+    val prefetchHistory by rememberUpdatedState({ requestOlderHistory(revealOlder = false) })
 
     if (state.timeline.isEmpty()) {
         val project = state.projects.firstOrNull { it.path == state.selectedProjectPath }
@@ -1231,24 +1278,13 @@ private fun Conversation(
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (state.hasOlderHistory && !state.isBusy) {
+                if (historyHeaderVisible && !state.isBusy) {
                     Spacer(Modifier.height(10.dp))
-                    TextButton(onClick = onLoadOlderHistory) {
-                        Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Load earlier messages")
-                    }
+                    HistoryControls(state) { requestOlderHistory(revealOlder = true) }
                 }
             }
         }
         return
-    }
-
-    val requestOlderHistory = {
-        if (state.hasOlderHistory && !state.isOlderHistoryLoading && pendingHistoryAnchor == null) {
-            pendingHistoryAnchor = visibleHistoryAnchor()
-            onLoadOlderHistory()
-        }
     }
 
     LaunchedEffect(
@@ -1304,18 +1340,21 @@ private fun Conversation(
     }
     LaunchedEffect(
         listState,
-        state.selectedThreadId,
-        state.hasOlderHistory,
-        state.isOlderHistoryLoading,
-        pendingHistoryAnchor,
+        conversationKey,
+        state.canLoadOlderHistory,
+        state.olderHistoryCursor,
+        state.olderHistoryError,
+        hasPositionedConversation,
     ) {
-        if (!state.hasOlderHistory || state.isOlderHistoryLoading || pendingHistoryAnchor != null) {
+        if (!state.canLoadOlderHistory || state.olderHistoryError != null || !hasPositionedConversation) {
             return@LaunchedEffect
         }
         snapshotFlow { listState.firstVisibleItemIndex to listState.isScrollInProgress }
             .distinctUntilChanged()
             .collect { (firstVisibleIndex, isScrolling) ->
-                if (isScrolling && firstVisibleIndex <= HISTORY_PREFETCH_INDEX) requestOlderHistory()
+                if (isScrolling && !programmaticScroll && firstVisibleIndex <= HISTORY_PREFETCH_INDEX) {
+                    prefetchHistory()
+                }
             }
     }
     LaunchedEffect(
@@ -1333,30 +1372,43 @@ private fun Conversation(
                     item.key != BOTTOM_SENTINEL_KEY
             }?.let { item -> item.key to item.offset }
         }.distinctUntilChanged().collect {
-            visibleHistoryAnchor()?.let { anchor -> pendingHistoryAnchor = anchor }
+            val pending = pendingHistoryAnchor ?: return@collect
+            visibleHistoryAnchor(pending.revealOlder)?.let { anchor -> pendingHistoryAnchor = anchor }
         }
     }
     LaunchedEffect(
-        state.selectedThreadId,
+        conversationKey,
+        state.connectionStatus,
+        state.isBusy,
         state.isOlderHistoryLoading,
+        state.olderHistoryCursor,
         state.olderHistoryError,
-        presentationTimeline.firstOrNull()?.item?.id,
+        pendingHistoryAnchor != null,
     ) {
         val anchor = pendingHistoryAnchor ?: return@LaunchedEffect
+        if (state.isBusy || state.connectionStatus != ConnectionStatus.CONNECTED) {
+            pendingHistoryAnchor = null
+            return@LaunchedEffect
+        }
         if (state.isOlderHistoryLoading) return@LaunchedEffect
+        // A fast or empty page may never display a spinner or change the first item.
+        // The cursor advancing (or an error) is the actual completion signal.
+        if (state.olderHistoryCursor == anchor.cursor && state.olderHistoryError == null) return@LaunchedEffect
         val timelineIndex = presentationTimeline.indexOfFirst { anchor.itemId in it.sourceItemIds }
-        if (timelineIndex >= 0) {
-            val leadingItems = if (historyHeaderVisible) 1 else 0
-            programmaticScroll = true
-            try {
+        programmaticScroll = true
+        try {
+            if (anchor.revealOlder && state.olderHistoryError == null) {
+                listState.scrollToItem(0)
+            } else if (timelineIndex >= 0) {
+                val leadingItems = if (historyHeaderVisible) 1 else 0
                 listState.scrollToItem(timelineIndex + leadingItems)
                 withFrameNanos { }
                 listState.scrollBy(-anchor.itemOffset.toFloat())
-            } finally {
-                programmaticScroll = false
             }
+        } finally {
+            programmaticScroll = false
+            pendingHistoryAnchor = null
         }
-        pendingHistoryAnchor = null
     }
     LaunchedEffect(
         state.selectedThreadId,
@@ -1390,36 +1442,11 @@ private fun Conversation(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 22.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-        if (historyHeaderVisible) {
-            item(key = HISTORY_CONTROL_KEY) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("history-control"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    when {
-                        state.isOlderHistoryLoading -> CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp,
-                        )
-                        state.olderHistoryError != null && state.hasOlderHistory -> TextButton(onClick = requestOlderHistory) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Retry loading earlier messages", maxLines = 1)
-                        }
-                        state.olderHistoryError != null -> Text(
-                            "Could not load earlier messages",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        state.hasOlderHistory -> TextButton(onClick = requestOlderHistory) {
-                            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Load earlier messages")
-                        }
-                    }
+            if (historyHeaderVisible) {
+                item(key = HISTORY_CONTROL_KEY) {
+                    HistoryControls(state) { requestOlderHistory(revealOlder = true) }
                 }
             }
-        }
             items(presentationTimeline, key = { it.item.id }) { presentation ->
                 Box(
                     Modifier.fillMaxWidth().testTag("timeline-item-${presentation.item.id}"),

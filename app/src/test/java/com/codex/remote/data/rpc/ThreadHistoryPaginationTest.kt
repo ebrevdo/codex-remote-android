@@ -102,16 +102,19 @@ class ThreadHistoryPaginationTest {
     @Test
     fun repeatedOrBlankHistoryCursorCannotContinuePagination() {
         assertNull(CodexRpcClient.checkedNextHistoryCursor("", emptySet()))
-        assertThrows(RpcException::class.java) {
+        assertThrows(HistoryPaginationException::class.java) {
             CodexRpcClient.checkedNextHistoryCursor("older-2", setOf("older-1", "older-2"))
         }
     }
 
     @Test
-    fun resumeFallsBackToTheCurrentBackwardsCursorField() {
-        assertEquals("page-cursor", selectOlderHistoryCursor("page-cursor", "resume-cursor"))
-        assertEquals("resume-cursor", selectOlderHistoryCursor("", "resume-cursor"))
-        assertNull(selectOlderHistoryCursor(null, ""))
+    fun historyPageLimitStopsWithAClearErrorButAllowsTheFinalPage() {
+        val consumed = (1..100).map { "page-$it" }.toSet()
+        assertNull(CodexRpcClient.checkedNextHistoryCursor(null, consumed))
+        val error = assertThrows(HistoryPaginationException::class.java) {
+            CodexRpcClient.checkedNextHistoryCursor("page-101", consumed)
+        }
+        assertTrue(error.message.orEmpty().contains("100-page"))
     }
 
     private fun item(id: String, body: String) = TimelineItem(

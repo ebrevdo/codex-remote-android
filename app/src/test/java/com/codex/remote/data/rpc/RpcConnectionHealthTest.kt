@@ -105,6 +105,19 @@ class RpcConnectionHealthTest {
         }
     }
 
+    @Test fun completedInitialHistoryPageDoesNotReuseTheResumeAnchor() = runBlocking {
+        val transport = FakeTransport()
+        CodexRpcClient(transport).use { client ->
+            client.initialize()
+            transport.resumeResult = """{"thread":{"status":{"type":"idle"}},"initialTurnsPage":{"data":[{"id":"turn-a","items":[{"type":"agentMessage","id":"message-a","text":"Only message"}]}],"nextCursor":null},"turnsBackwardsCursor":"newest-turn-anchor"}"""
+            val complete = client.resumeThread("thread-a", "/project")
+            assertEquals(listOf("Only message"), complete.timeline.map { it.body })
+            assertNull(complete.olderHistoryCursor)
+            transport.resumeResult = """{"thread":{"status":{"type":"idle"}},"initialTurnsPage":{"data":[],"nextCursor":"older-page"},"turnsBackwardsCursor":"newest-turn-anchor"}"""
+            assertEquals("older-page", client.resumeThread("thread-a", "/project").olderHistoryCursor)
+        }
+    }
+
     private class FakeTransport : AppServerTransport {
         override val remotePlatform = RemotePlatform.POSIX
         override val codexVersion = "test"
