@@ -198,3 +198,10 @@ Please report upstream vulnerabilities privately through
 
 Do not open a public issue for credentials, authentication bypasses, host-key
 verification problems, or other vulnerabilities that could put users at risk.
+
+## Connection recovery
+
+Transient transport failures trigger retries only while the app is visible and a
+network is available. Trust, credential, protocol and input-limit failures stop
+automatic retries. No commands, turns or approval responses are replayed. See
+[connection recovery](docs/CONNECTION_RECOVERY.md) for deadlines and validation.

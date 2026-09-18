@@ -74,6 +74,27 @@ class WorkspaceDeviceTest {
     val composeRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
+    fun connectionChecksAndRecoveryAreVisibleOnTheMainScreen() {
+        val state = mutableStateOf(baseState().copy(isCheckingConnection = true))
+        show(state)
+        composeRule.onNodeWithText("Checking connection…").assertIsDisplayed()
+        composeRule.runOnIdle {
+            state.value = state.value.copy(
+                isCheckingConnection = false,
+                connectionStatus = com.codex.remote.domain.ConnectionStatus.CONNECTING,
+                isReconnecting = true,
+                connectionMessage = "Disconnected. Reconnecting in 2 seconds…",
+            )
+        }
+        composeRule.onNodeWithText("Reconnecting", substring = false).assertIsDisplayed()
+        composeRule.onNodeWithText("Disconnected. Reconnecting in 2 seconds…").assertIsDisplayed()
+        composeRule.runOnIdle {
+            state.value = state.value.copy(connectionStatus = com.codex.remote.domain.ConnectionStatus.ERROR, isReconnecting = false)
+        }
+        composeRule.onAllNodesWithText("Disconnected").assertCountEquals(2)
+    }
+
+    @Test
     fun composerMatchesDesktopLayoutAndPlanIsCommandDriven() {
         val state = mutableStateOf(baseState())
         val callbacks = WorkspaceCallbacks()

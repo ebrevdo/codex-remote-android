@@ -268,6 +268,8 @@ data class RemoteThreadSession(
     val approvalPolicy: String? = null,
     val approvalsReviewer: String? = null,
     val permissionProfile: String? = null,
+    val isTurnRunning: Boolean? = null,
+    val activeTurnId: String? = null,
 )
 
 data class RemoteThreadHistoryPage(
@@ -402,6 +404,8 @@ data class AppUiState(
     val savedConnections: List<SavedConnection> = emptyList(),
     val activeConnection: SavedConnection? = null,
     val connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
+    val isReconnecting: Boolean = false,
+    val isCheckingConnection: Boolean = false,
     val connectionMessage: String = "",
     val threads: List<RemoteThread> = emptyList(),
     val archivedThreads: List<RemoteThread> = emptyList(),

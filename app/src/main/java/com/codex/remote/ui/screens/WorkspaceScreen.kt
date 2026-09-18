@@ -818,7 +818,7 @@ private fun WorkspaceContent(
     var followLatest by remember(conversationKey) { mutableStateOf(true) }
     var hasPositionedConversation by remember(conversationKey) { mutableStateOf(false) }
     val currentThread = state.threads.firstOrNull { it.id == state.selectedThreadId }
-    val canCompose = state.connectionStatus == ConnectionStatus.CONNECTED &&
+    val canCompose = state.connectionStatus == ConnectionStatus.CONNECTED && !state.isCheckingConnection &&
         state.remoteAccount?.canRunCodex == true &&
         state.models.isNotEmpty() &&
         (state.selectedProjectPath?.isNotBlank() == true || state.selectedThreadId != null)
@@ -882,14 +882,14 @@ private fun WorkspaceContent(
         when (state.connectionStatus) {
             ConnectionStatus.CONNECTING -> ConnectionState(
                 icon = null,
-                title = "Connecting over SSH",
+                title = if (state.isReconnecting) "Reconnecting" else "Connecting over SSH",
                 detail = state.connectionMessage,
                 loading = true,
                 modifier = Modifier.fillMaxSize().padding(padding),
             )
             ConnectionStatus.ERROR -> ConnectionState(
                 icon = Icons.Outlined.ErrorOutline,
-                title = "Connection failed",
+                title = "Disconnected",
                 detail = state.connectionMessage,
                 loading = false,
                 action = onOpenConnections,
@@ -1066,14 +1066,19 @@ private fun ThreadHeaderOverflow(
 private fun ConnectionIndicator(state: AppUiState) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         val color = when (state.connectionStatus) {
-            ConnectionStatus.CONNECTED -> MaterialTheme.colorScheme.secondary
+            ConnectionStatus.CONNECTED -> if (state.isCheckingConnection) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.secondary
             ConnectionStatus.ERROR -> MaterialTheme.colorScheme.error
             else -> MaterialTheme.colorScheme.onSurfaceVariant
         }
         Box(Modifier.size(6.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
         Text(
-            state.activeConnection?.host.orEmpty(),
+            when {
+                state.isCheckingConnection -> "Checking connection…"
+                state.connectionStatus == ConnectionStatus.CONNECTING -> if (state.isReconnecting) "Reconnecting…" else "Connecting…"
+                state.connectionStatus != ConnectionStatus.CONNECTED -> "Disconnected"
+                else -> state.activeConnection?.host.orEmpty()
+            },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

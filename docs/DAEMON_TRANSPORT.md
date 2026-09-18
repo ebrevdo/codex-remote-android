@@ -42,9 +42,10 @@ and updater preferences. This app does not enable remote control, change updater
 settings, install a separate remote helper, or stop the daemon on disconnect.
 Eligible Codex installations can update according to their own settings.
 
-The prototype tests initialization, reading history and reconnecting. It does not
-promise automatic recovery of a running turn or its approval requests after a
-connection loss; the existing app's reconnect/resume behavior still applies.
+The app automatically reconnects and resumes the selected conversation after a
+transient connection loss. It refreshes history and the active-turn identity returned
+by the server. Commands and approval responses are never replayed; pending approval
+recovery still depends on the server. See [connection recovery](CONNECTION_RECOVERY.md).
 
 ## Additional transport limits
 

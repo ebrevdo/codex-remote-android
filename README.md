@@ -53,6 +53,15 @@ the daemon running. Existing saved hosts keep **Per connection** mode.
 This requires a remote Codex installation supporting both commands. See
 [daemon transport](docs/DAEMON_TRANSPORT.md) for requirements, limits, and validation.
 
+## Connection recovery
+
+The app checks the remote connection when you return and periodically while it is
+visible. A lost or unresponsive connection shows **Reconnecting** in the workspace;
+retries pause while backgrounded or offline and resume when you return or the network
+recovers. The selected conversation is reattached and refreshed without replaying
+messages, commands or approval responses. Host-key, credential and security-limit
+failures require manual attention. See [connection recovery](docs/CONNECTION_RECOVERY.md).
+
 ## Install
 
 Download the signed APK from the latest

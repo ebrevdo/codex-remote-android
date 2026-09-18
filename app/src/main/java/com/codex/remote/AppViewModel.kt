@@ -20,10 +20,8 @@ import com.codex.remote.domain.ComposerImageAttachment
 import com.codex.remote.domain.PermissionMode
 import com.codex.remote.domain.RemoteCollaborationMode
 import com.codex.remote.domain.RemoteProject
-import com.codex.remote.domain.RemoteAccount
 import com.codex.remote.domain.RemoteModel
 import com.codex.remote.domain.RemotePathEntry
-import com.codex.remote.domain.RemoteServerInfo
 import com.codex.remote.domain.RemoteThread
 import com.codex.remote.domain.ReviewTargetKind
 import com.codex.remote.domain.SavedConnection
@@ -36,6 +34,17 @@ import com.codex.remote.domain.composerToken
 import com.codex.remote.domain.containsComposerToken
 import com.codex.remote.domain.withThreadArchived
 import com.codex.remote.domain.withThreadRenamed
+import com.codex.remote.data.security.InputLimitExceededException
+import com.codex.remote.data.ssh.HostKeyChangedException
+import com.codex.remote.data.ssh.RemoteCodexUnavailableException
+import com.codex.remote.data.ssh.RemoteProtocolException
+import net.schmizz.sshj.userauth.UserAuthException
+import org.java_websocket.exceptions.InvalidDataException
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,6 +64,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private var rpc: CodexRpcClient? = null
     private var eventJob: Job? = null
+    private var failureJob: Job? = null
+    private var connectJob: Job? = null
+    private var connectionGeneration = 0L
+    private var turnStateVersion = 0L
+    private val recovery = ConnectionRecovery(
+        scope = viewModelScope,
+        checkConnection = ::checkConnection,
+        reconnect = { _state.value.activeConnection?.let { connect(it, automatic = true) } },
+        onWaiting = { wait ->
+            _state.update {
+                it.copy(
+                    connectionStatus = ConnectionStatus.CONNECTING,
+                    isReconnecting = true,
+                    connectionMessage = when (wait) {
+                        null -> "Disconnected. Waiting for the app to be active and a network to be available."
+                        0L -> "Disconnected. Reconnecting…"
+                        else -> "Disconnected. Reconnecting in ${wait / 1000} seconds…"
+                    },
+                )
+            }
+        },
+    )
     private var didRestoreLastConnection = false
 
     init {
@@ -138,8 +169,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun connect(connection: SavedConnection) {
-        viewModelScope.launch {
+    fun connect(connection: SavedConnection) = connect(connection, automatic = false)
+
+    private fun connect(connection: SavedConnection, automatic: Boolean) {
+        val previous = _state.value
+        val sameHost = previous.activeConnection?.id == connection.id
+        val selectedThread = if (sameHost) {
+            (previous.threads + previous.archivedThreads).firstOrNull { it.id == previous.selectedThreadId }
+                ?: previous.selectedThreadId?.let { RemoteThread(it, "", previous.selectedProjectPath.orEmpty(), 0, "") }
+        } else null
+        val generation = ++connectionGeneration
+        connectJob?.cancel()
+        closeClient()
+        recovery.connecting(resetBackoff = !automatic)
+        if (sameHost) {
+            _state.update {
+                it.copy(
+                    activeConnection = connection,
+                    connectionStatus = ConnectionStatus.CONNECTING,
+                    connectionMessage = "Connecting to ${connection.host}…",
+                    isReconnecting = automatic || previous.remoteServer != null,
+                    isCheckingConnection = false,
+                    showConnections = if (automatic) it.showConnections else false,
+                    pendingApproval = null,
+                    pendingHostKeyFingerprint = null,
+                    isBusy = false,
+                    isTurnRunning = false,
+                    activeTurnId = null,
+                    notice = null,
+                )
+            }
+        } else {
             disconnectInternal(clearActive = false)
             _state.update {
                 it.copy(
@@ -193,12 +253,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     statusError = null,
                     pendingHostKeyFingerprint = null,
                     notice = null,
+                    isReconnecting = false,
+                    isCheckingConnection = false,
                 )
             }
-            runCatching {
+        }
+        connectJob = viewModelScope.launch {
+            var client: CodexRpcClient? = null
+            try {
                 val secrets = withContext(Dispatchers.IO) { store.decrypt(connection) }
-                val transport = transportFactory.open(connection, secrets)
-                val client = CodexRpcClient(transport)
+                client = CodexRpcClient(transportFactory.open(connection, secrets))
+                currentCoroutineContext().ensureActive()
+                if (generation != connectionGeneration) return@launch
                 rpc = client
                 observeEvents(client)
                 val server = withTimeout(20_000) { client.initialize() }
@@ -211,66 +277,111 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val permissionProfiles = runCatching {
                     withTimeout(20_000) { client.listPermissionProfiles(null) }
                 }.getOrDefault(emptyList())
+                currentCoroutineContext().ensureActive()
+                client.failure.value?.let { throw it }
                 store.recordUsed(connection.id)
-                ConnectionBootstrap(server, account, models, threads, collaborationModes, permissionProfiles)
-            }.onSuccess { bootstrap ->
-                val projects = groupThreadsByProject(bootstrap.threads)
-                val selectedModel = bootstrap.models.firstOrNull { model -> model.isDefault }
-                    ?: bootstrap.models.firstOrNull()
+                val projects = groupThreadsByProject(threads)
+                val model = models.firstOrNull { sameHost && it.id == previous.selectedModel }
+                    ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
+                _state.update {
+                    it.copy(
+                        models = models,
+                        selectedModel = model?.id,
+                        selectedReasoningEffort = model?.preferredReasoningEffort(),
+                        selectedServiceTier = model?.defaultServiceTier,
+                        collaborationModes = collaborationModes,
+                        selectedCollaborationMode = collaborationModes.firstOrNull { it.mode == "default" }?.mode ?: "default",
+                        permissionProfiles = permissionProfiles,
+                        remoteServer = server,
+                        remoteAccount = account,
+                        threads = threads,
+                        projects = projects,
+                        selectedProjectPath = previous.selectedProjectPath.takeIf { sameHost } ?: projects.firstOrNull()?.path,
+                    )
+                }
+                // Resume subscribes and fetches history. Never replay a turn, command or approval response.
+                val thread = threads.firstOrNull { it.id == previous.selectedThreadId }.takeIf { sameHost } ?: selectedThread
+                if (thread != null) resumeSelectedThread(client, thread)
+                currentCoroutineContext().ensureActive()
+                client.failure.value?.let { throw it }
                 _state.update {
                     it.copy(
                         connectionStatus = ConnectionStatus.CONNECTED,
-                        connectionMessage = connectionSummary(
-                            projects.size,
-                            bootstrap.threads.size,
-                            bootstrap.server.codexVersion,
-                        ),
-                        models = bootstrap.models,
-                        selectedModel = selectedModel?.id,
-                        selectedReasoningEffort = selectedModel?.preferredReasoningEffort(),
-                        selectedServiceTier = selectedModel?.defaultServiceTier,
-                        collaborationModes = bootstrap.collaborationModes,
-                        selectedCollaborationMode = bootstrap.collaborationModes
-                            .firstOrNull { mode -> mode.mode == "default" }?.mode ?: "default",
-                        permissionProfiles = bootstrap.permissionProfiles,
-                        selectedPermissionProfile = null,
-                        remoteServer = bootstrap.server,
-                        remoteAccount = bootstrap.account,
-                        threads = bootstrap.threads,
-                        projects = projects,
-                        skills = emptyList(),
-                        plugins = emptyList(),
-                        isComposerCatalogLoading = true,
-                        composerCatalogError = null,
-                        selectedProjectPath = projects.firstOrNull()?.path,
+                        connectionMessage = connectionSummary(projects.size, threads.size, server.codexVersion),
+                        statusError = null,
+                        isStatusLoading = false,
+                        isReconnecting = false,
+                        isCheckingConnection = false,
                     )
                 }
+                recovery.connected()
                 refreshComposerCatalog()
-            }.onFailure { error ->
-                rpc?.close()
-                rpc = null
-                val unknownHostKey = generateSequence(error) { it.cause }
-                    .filterIsInstance<UnknownHostKeyException>()
-                    .firstOrNull()
-                if (unknownHostKey != null) {
-                    _state.update {
-                        it.copy(
-                            connectionStatus = ConnectionStatus.ERROR,
-                            connectionMessage = "Confirm the SSH host fingerprint to connect",
-                            pendingHostKeyFingerprint = unknownHostKey.fingerprint,
-                        )
-                    }
-                } else {
-                    _state.update {
-                        it.copy(
-                            connectionStatus = ConnectionStatus.ERROR,
-                            connectionMessage = friendlyError(error),
-                            notice = friendlyError(error),
-                        )
-                    }
-                }
+            } catch (error: Exception) {
+                if (error is CancellationException && error !is kotlinx.coroutines.TimeoutCancellationException) throw error
+                if (generation == connectionGeneration) connectionFailed(error)
+            } finally {
+                if (rpc !== client) client?.close()
             }
         }
+    }
+
+    fun setAppForeground(foreground: Boolean) {
+        _state.update { it.copy(isCheckingConnection = foreground && it.connectionStatus == ConnectionStatus.CONNECTED) }
+        recovery.setForeground(foreground)
+    }
+
+    fun onNetworkChanged(available: Boolean) {
+        recovery.networkChanged(available)
+        if (!available && _state.value.connectionStatus == ConnectionStatus.CONNECTED) {
+            connectionFailed(IOException("Network unavailable"))
+        }
+    }
+
+    private suspend fun checkConnection() {
+        val client = rpc ?: return
+        try {
+            client.checkHealth()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (rpc === client) connectionFailed(error)
+        } finally {
+            if (rpc === client) _state.update { it.copy(isCheckingConnection = false) }
+        }
+    }
+
+    private fun connectionFailed(error: Throwable) {
+        ++connectionGeneration
+        connectJob?.cancel()
+        closeClient()
+        val unknownHostKey = generateSequence(error) { it.cause }.filterIsInstance<UnknownHostKeyException>().firstOrNull()
+        _state.update {
+            it.copy(
+                connectionStatus = ConnectionStatus.ERROR,
+                connectionMessage = if (unknownHostKey != null) "Confirm the SSH host fingerprint to connect" else friendlyError(error),
+                pendingHostKeyFingerprint = unknownHostKey?.fingerprint,
+                pendingApproval = null,
+                isCheckingConnection = false,
+                isReconnecting = false,
+                isBusy = false,
+                isTurnRunning = false,
+                activeTurnId = null,
+                isStatusLoading = false,
+                statusError = friendlyError(error),
+                notice = friendlyError(error),
+            )
+        }
+        recovery.failed(isRetryableConnectionFailure(error))
+    }
+
+    private fun closeClient() {
+        val client = rpc
+        rpc = null
+        eventJob?.cancel()
+        eventJob = null
+        failureJob?.cancel()
+        failureJob = null
+        client?.close()
     }
 
     fun trustPendingHostKey() {
@@ -292,19 +403,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnect() {
-        viewModelScope.launch { disconnectInternal(clearActive = true) }
+        ++connectionGeneration
+        connectJob?.cancel()
+        recovery.stop()
+        disconnectInternal(clearActive = true)
     }
 
     private fun disconnectInternal(clearActive: Boolean) {
-        eventJob?.cancel()
-        eventJob = null
-        rpc?.close()
-        rpc = null
+        closeClient()
         _state.update {
             it.copy(
                 activeConnection = if (clearActive) null else it.activeConnection,
                 connectionStatus = ConnectionStatus.DISCONNECTED,
                 connectionMessage = "",
+                isReconnecting = false,
+                isCheckingConnection = false,
                 threads = if (clearActive) emptyList() else it.threads,
                 archivedThreads = if (clearActive) emptyList() else it.archivedThreads,
                 isArchivedThreadsLoading = false,
@@ -401,103 +514,112 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectThread(thread: RemoteThread) {
-        if (_state.value.activeConnection == null) return
+        if (_state.value.connectionStatus != ConnectionStatus.CONNECTED) return
         val client = rpc ?: return
-        viewModelScope.launch {
-            val projectPath = _state.value.projects
-                .firstOrNull { project -> project.threads.any { it.id == thread.id } }
-                ?.path
-                ?: thread.cwd
-            _state.update {
-                it.copy(
-                    selectedProjectPath = projectPath,
-                    selectedThreadId = thread.id,
-                    threadGoal = null,
-                    isGoalLoading = true,
-                    goalError = null,
-                    threadTokenUsage = null,
-                    timeline = emptyList(),
-                    olderHistoryCursor = null,
-                    hasOlderHistory = false,
-                    isOlderHistoryLoading = false,
-                    olderHistoryError = null,
-                    consumedHistoryCursors = emptySet(),
-                    isBusy = true,
-                    isTurnRunning = thread.status.isRemoteThreadActive(),
-                    activeTurnId = null,
-                )
-            }
-            val session = runCatching { client.resumeThread(thread.id, thread.cwd) }
-                .getOrElse { error ->
-                    _state.update { state ->
-                        if (state.selectedThreadId == thread.id) state.copy(isGoalLoading = false) else state
-                    }
-                    showError(error)
-                    return@launch
+        viewModelScope.launch { resumeSelectedThread(client, thread) }
+    }
+
+    private suspend fun resumeSelectedThread(client: CodexRpcClient, thread: RemoteThread) {
+        val projectPath = _state.value.projects
+            .firstOrNull { project -> project.threads.any { it.id == thread.id } }
+            ?.path
+            ?: thread.cwd
+        _state.update {
+            it.copy(
+                selectedProjectPath = projectPath,
+                selectedThreadId = thread.id,
+                threadGoal = null,
+                isGoalLoading = true,
+                goalError = null,
+                threadTokenUsage = null,
+                timeline = emptyList(),
+                olderHistoryCursor = null,
+                hasOlderHistory = false,
+                isOlderHistoryLoading = false,
+                olderHistoryError = null,
+                consumedHistoryCursors = emptySet(),
+                isBusy = true,
+                isTurnRunning = thread.status.isRemoteThreadActive(),
+                activeTurnId = null,
+            )
+        }
+        val turnVersion = turnStateVersion
+        val session = runCatching { client.resumeThread(thread.id, thread.cwd) }
+            .getOrElse { error ->
+                currentCoroutineContext().ensureActive()
+                if (rpc !== client) return
+                _state.update { state ->
+                    if (rpc === client && state.selectedThreadId == thread.id) state.copy(isGoalLoading = false) else state
                 }
-            _state.update { state ->
-                if (state.selectedThreadId != thread.id) return@update state
-                val model = state.models.firstOrNull { it.id == session.model }
-                state.copy(
-                    timeline = mergeTimelineHistory(session.timeline, state.timeline),
-                    olderHistoryCursor = session.olderHistoryCursor,
-                    hasOlderHistory = session.olderHistoryCursor != null,
-                    isOlderHistoryLoading = false,
-                    olderHistoryError = null,
-                    consumedHistoryCursors = emptySet(),
-                    isBusy = false,
-                    selectedModel = model?.id ?: state.selectedModel,
-                    selectedReasoningEffort = session.reasoningEffort
-                        ?.takeIf { effort -> model?.supports(effort) == true }
-                        ?: model?.preferredReasoningEffort()
-                        ?: state.selectedReasoningEffort,
-                    selectedServiceTier = session.serviceTier
-                        ?.takeIf { tier -> model?.serviceTiers?.any { it.id == tier } == true }
-                        ?: model?.defaultServiceTier,
-                    selectedCollaborationMode = session.collaborationMode
-                        ?.takeIf { mode -> state.collaborationModes.any { it.mode == mode } }
-                        ?: state.defaultCollaborationMode(),
-                    selectedPermissionProfile = session.permissionProfile,
-                    approvalPolicy = session.approvalPolicy ?: state.approvalPolicy,
-                    approvalsReviewer = session.approvalsReviewer ?: state.approvalsReviewer,
-                )
+                showError(error)
+                return
             }
-            runCatching { client.getThreadGoal(thread.id) }
-                .onSuccess { goal ->
-                    _state.update { state ->
-                        if (state.selectedThreadId == thread.id) {
+        currentCoroutineContext().ensureActive()
+        if (rpc !== client) return
+        _state.update { state ->
+            if (state.selectedThreadId != thread.id) return@update state
+            val model = state.models.firstOrNull { it.id == session.model }
+            state.copy(
+                timeline = mergeTimelineHistory(session.timeline, state.timeline),
+                isTurnRunning = if (turnVersion == turnStateVersion) session.isTurnRunning ?: state.isTurnRunning else state.isTurnRunning,
+                activeTurnId = if (turnVersion == turnStateVersion) session.activeTurnId else state.activeTurnId,
+                olderHistoryCursor = session.olderHistoryCursor,
+                hasOlderHistory = session.olderHistoryCursor != null,
+                isOlderHistoryLoading = false,
+                olderHistoryError = null,
+                consumedHistoryCursors = emptySet(),
+                isBusy = false,
+                selectedModel = model?.id ?: state.selectedModel,
+                selectedReasoningEffort = session.reasoningEffort
+                    ?.takeIf { effort -> model?.supports(effort) == true }
+                    ?: model?.preferredReasoningEffort()
+                    ?: state.selectedReasoningEffort,
+                selectedServiceTier = session.serviceTier
+                    ?.takeIf { tier -> model?.serviceTiers?.any { it.id == tier } == true }
+                    ?: model?.defaultServiceTier,
+                selectedCollaborationMode = session.collaborationMode
+                    ?.takeIf { mode -> state.collaborationModes.any { it.mode == mode } }
+                    ?: state.defaultCollaborationMode(),
+                selectedPermissionProfile = session.permissionProfile,
+                approvalPolicy = session.approvalPolicy ?: state.approvalPolicy,
+                approvalsReviewer = session.approvalsReviewer ?: state.approvalsReviewer,
+            )
+        }
+        runCatching { client.getThreadGoal(thread.id) }
+            .onSuccess { goal ->
+                _state.update { state ->
+                    if (rpc === client && state.selectedThreadId == thread.id) {
+                        state.copy(
+                            threadGoal = goal,
+                            isGoalLoading = false,
+                            goalError = null,
+                        )
+                    } else {
+                        state
+                    }
+                }
+            }
+            .onFailure { error ->
+                _state.update { state ->
+                    if (rpc === client && state.selectedThreadId == thread.id) {
+                        if (error.isUnsupportedRpcMethod("thread/goal/get")) {
                             state.copy(
-                                threadGoal = goal,
+                                threadGoal = null,
                                 isGoalLoading = false,
                                 goalError = null,
                             )
                         } else {
-                            state
+                            state.copy(
+                                threadGoal = null,
+                                isGoalLoading = false,
+                                goalError = friendlyGoalError(error),
+                            )
                         }
+                    } else {
+                        state
                     }
                 }
-                .onFailure { error ->
-                    _state.update { state ->
-                        if (state.selectedThreadId == thread.id) {
-                            if (error.isUnsupportedRpcMethod("thread/goal/get")) {
-                                state.copy(
-                                    threadGoal = null,
-                                    isGoalLoading = false,
-                                    goalError = null,
-                                )
-                            } else {
-                                state.copy(
-                                    threadGoal = null,
-                                    isGoalLoading = false,
-                                    goalError = friendlyGoalError(error),
-                                )
-                            }
-                        } else {
-                            state
-                        }
-                    }
-                }
-        }
+            }
     }
 
     fun loadOlderHistory() {
@@ -1160,11 +1282,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(isStatusLoading = true, statusError = null) }
             runCatching { client.readRateLimits() }
                 .onSuccess { limits ->
+                    if (rpc !== client) return@onSuccess
                     _state.update {
                         it.copy(rateLimits = limits, isStatusLoading = false, statusError = null)
                     }
                 }
                 .onFailure { error ->
+                    if (rpc !== client) return@onFailure
                     _state.update { state ->
                         if (error.isUnsupportedRpcMethod("account/rateLimits/read")) {
                             state.copy(rateLimits = null, isStatusLoading = false, statusError = null)
@@ -1349,6 +1473,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun clearNotice() = _state.update { it.copy(notice = null) }
 
     private fun observeEvents(client: CodexRpcClient) {
+        failureJob?.cancel()
+        failureJob = viewModelScope.launch {
+            client.failure.filterNotNull().collect { error ->
+                if (rpc === client) connectionFailed(error)
+            }
+        }
         eventJob?.cancel()
         eventJob = viewModelScope.launch {
             client.events.collect { event ->
@@ -1361,6 +1491,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     is AppServerEvent.OutputDelta -> appendDelta(event.threadId, event.itemId, event.delta, TimelineKind.COMMAND)
                     is AppServerEvent.TurnRunning -> {
                         if (!_state.value.acceptsThreadEvent(event.threadId)) return@collect
+                        turnStateVersion++
                         _state.update { state ->
                             state.copy(
                                 isTurnRunning = event.running,
@@ -1474,9 +1605,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (state.acceptsThreadEvent(event.threadId)) {
                             state.copy(
                                 notice = event.message,
-                                pendingApproval = if (event.disconnected) null else state.pendingApproval,
-                                connectionStatus = if (event.disconnected) ConnectionStatus.ERROR else state.connectionStatus,
-                                connectionMessage = if (event.disconnected) event.message else state.connectionMessage,
                                 isTurnRunning = false,
                                 activeTurnId = null,
                                 timeline = state.timeline.withRunningItemsCompleted(),
@@ -1506,6 +1634,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val models = client.listModels()
                 account to models
             }.onSuccess { (account, models) ->
+                if (rpc !== client) return@onSuccess
                 _state.update { state ->
                     val selected = models.firstOrNull { it.id == state.selectedModel }
                         ?: models.firstOrNull { it.isDefault }
@@ -1524,7 +1653,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         selectedServiceTier = serviceTier,
                     )
                 }
-            }.onFailure(::showError)
+            }.onFailure { if (rpc === client) showError(it) }
         }
     }
 
@@ -1600,6 +1729,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.listThreads() }
                 .onSuccess { threads ->
+                    if (rpc !== client) return@onSuccess
                     val projects = groupThreadsByProject(threads)
                     _state.update { state ->
                         val selectedPath = state.selectedProjectPath
@@ -1666,6 +1796,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(isComposerCatalogLoading = true, composerCatalogError = null) }
         viewModelScope.launch {
             val catalog = loadComposerCatalog(client, cwds, forceReload)
+            if (rpc !== client) return@launch
             _state.update {
                 it.copy(
                     skills = catalog.skills,
@@ -1678,6 +1809,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun showError(error: Throwable) {
+        if (error is CancellationException) return
         _state.update { it.copy(isBusy = false, notice = friendlyError(error)) }
     }
 
@@ -1698,19 +1830,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
-        rpc?.close()
+        recovery.stop()
+        connectJob?.cancel()
+        closeClient()
         super.onCleared()
     }
 }
 
-private data class ConnectionBootstrap(
-    val server: RemoteServerInfo,
-    val account: RemoteAccount,
-    val models: List<RemoteModel>,
-    val threads: List<RemoteThread>,
-    val collaborationModes: List<RemoteCollaborationMode>,
-    val permissionProfiles: List<com.codex.remote.domain.RemotePermissionProfile>,
-)
+
 
 internal fun AppUiState.acceptsThreadEvent(threadId: String?): Boolean =
     selectedThreadId != null && selectedThreadId == threadId
@@ -1803,3 +1930,14 @@ private val INIT_PROMPT = """
 """.trimIndent()
 
 private val BUILT_IN_PERMISSION_PROFILES = setOf(":workspace", ":danger-full-access", ":read-only")
+
+/** Trust, credential and input-policy failures require user action, never an automatic retry loop. */
+internal fun isRetryableConnectionFailure(error: Throwable): Boolean {
+    val causes = generateSequence(error) { it.cause }.toList()
+    if (causes.any {
+        it is UnknownHostKeyException || it is HostKeyChangedException || it is UserAuthException ||
+            it is InputLimitExceededException || it is InvalidDataException || it is RemoteCodexUnavailableException ||
+            it is RemoteProtocolException || it is IllegalArgumentException || it is IllegalStateException || it is SecurityException
+    }) return false
+    return causes.any { it is IOException || it is kotlinx.coroutines.TimeoutCancellationException }
+}

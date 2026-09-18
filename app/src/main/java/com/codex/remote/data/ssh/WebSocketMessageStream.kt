@@ -24,6 +24,8 @@ import java.nio.ByteBuffer
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal class RemoteProtocolException(message: String) : IOException(message)
+
 /** WebSocket framing over an authenticated SSH exec channel; never opens a network socket. */
 internal class WebSocketMessageStream(
     private val input: InputStream,
@@ -55,7 +57,7 @@ internal class WebSocketMessageStream(
             if (!readBytes()) throw IOException("Codex proxy closed before the WebSocket handshake")
             synchronized(lock) {
                 checkFailure()
-                if (!handshakeComplete && (engine.isClosing || engine.isClosed)) throw IOException("Codex proxy rejected the WebSocket handshake")
+                if (!handshakeComplete && (engine.isClosing || engine.isClosed)) throw RemoteProtocolException("Codex proxy rejected the WebSocket handshake")
             }
         }
     }
@@ -141,7 +143,7 @@ internal class WebSocketMessageStream(
         }
 
         override fun onWebsocketMessage(conn: WebSocket, blob: ByteBuffer) {
-            failure = IOException("Expected a JSON text WebSocket message")
+            failure = RemoteProtocolException("Expected a JSON text WebSocket message")
         }
 
         override fun onWebsocketHandshakeReceivedAsClient(conn: WebSocket, request: ClientHandshake, response: ServerHandshake) {
@@ -157,7 +159,8 @@ internal class WebSocketMessageStream(
 
         override fun onWebsocketClosing(conn: WebSocket, code: Int, reason: String?, remote: Boolean) {
             if (code != CloseFrame.NORMAL && code != CloseFrame.GOING_AWAY && failure == null) {
-                failure = IOException("Codex WebSocket closed (code $code): ${reason.orEmpty().take(256)}")
+                val message = "Codex WebSocket closed (code $code): ${reason.orEmpty().take(256)}"
+                failure = if (code == CloseFrame.ABNORMAL_CLOSE) IOException(message) else RemoteProtocolException(message)
             }
         }
 

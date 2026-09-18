@@ -14,7 +14,6 @@ import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.BufferedReader
-import java.io.Closeable
 import java.io.InputStreamReader
 import java.security.MessageDigest
 import java.security.PublicKey
@@ -35,14 +34,16 @@ class ActiveSshTransport internal constructor(
     private val session: Session,
     private val command: Session.Command,
     val fingerprint: String,
-    val remotePlatform: RemotePlatform,
-    val codexVersion: String,
+    override val remotePlatform: RemotePlatform,
+    override val codexVersion: String,
     private val messages: MessageStream,
-) : Closeable {
-    val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
+) : AppServerTransport {
+    override val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
 
-    fun readMessage(): String? = messages.readMessage()
-    fun writeMessage(message: String) = messages.writeMessage(message)
+    override fun readMessage(): String? = messages.readMessage()
+    override fun writeMessage(message: String) = withIoDeadline(15_000, ::close) {
+        messages.writeMessage(message)
+    }
 
     override fun close() {
         // Close the socket first so blocked readers/writers cannot prevent shutdown.

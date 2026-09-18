@@ -1,0 +1,18 @@
+{
+  "date": "2026-09-16",
+  "artifact": "codex-remote-recovery.apk",
+  "sha256": "a020040ef933d57c3edb6954d4cd8de9101a1e3050dc14c645141f1234fa03d8",
+  "certificate_sha256": "208c9c2beb3217ded40a2bc3c05f43d7310c6b42e3f96c5314fe3b67e7fe14fb",
+  "same_signing_key_as_previous_release": true,
+  "unit_tests_passed": 115,
+  "opt_in_integration_tests_passed": 1,
+  "real_codex_cli": "codex-cli 0.154.0",
+  "daemon_and_stdio_health_checks_passed": true,
+  "lint_errors": 0,
+  "lint_warnings": 19,
+  "strict_offline_build_passed": true,
+  "apk_payload_matches_unsigned": true,
+  "android_ui_tests_compiled": true,
+  "android_ui_tests_executed": false,
+  "device_background_and_doze_tested": false
+}

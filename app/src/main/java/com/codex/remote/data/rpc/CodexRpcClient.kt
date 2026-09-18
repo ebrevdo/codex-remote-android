@@ -1,7 +1,7 @@
 package com.codex.remote.data.rpc
 
 import com.codex.remote.BuildConfig
-import com.codex.remote.data.ssh.ActiveSshTransport
+import com.codex.remote.data.ssh.AppServerTransport
 import com.codex.remote.data.security.InputRateLimit
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ApprovalQuestion
@@ -44,11 +44,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -69,6 +72,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.Closeable
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -98,7 +103,7 @@ sealed interface AppServerEvent {
         val settings: RemoteThreadSettingsSnapshot,
     ) : AppServerEvent
     data class LoginCompleted(val success: Boolean, val error: String?) : AppServerEvent
-    data class Failure(val message: String, val threadId: String? = null, val disconnected: Boolean = false) : AppServerEvent
+    data class Failure(val message: String, val threadId: String? = null) : AppServerEvent
     data class Warning(val message: String) : AppServerEvent
     data class Diagnostic(val message: String) : AppServerEvent
 }
@@ -106,7 +111,9 @@ sealed interface AppServerEvent {
 class RpcException(message: String, val code: Int? = null) : Exception(message)
 
 class CodexRpcClient(
-    private val transport: ActiveSshTransport,
+    private val transport: AppServerTransport,
+    private val requestTimeoutMillis: Long = 60_000,
+    private val healthTimeoutMillis: Long = 10_000,
 ) : Closeable {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val requestId = AtomicLong(1)
@@ -115,13 +122,15 @@ class CodexRpcClient(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _events = MutableSharedFlow<AppServerEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<AppServerEvent> = _events
-    @Volatile private var closed = false
-    private var readerJob: Job? = null
+    private val closed = AtomicBoolean(false)
+    private val _failure = MutableStateFlow<Throwable?>(null)
+    // State, not an event: a failure remains visible even if a collector starts late.
+    val failure = _failure.asStateFlow()
     private val approvals = ConcurrentHashMap<String, ApprovalRequest>()
     private val approvalChanges = linkedMapOf<Triple<String?, String?, String>, String>()
 
     suspend fun initialize(): RemoteServerInfo {
-        readerJob = scope.launch { readLoop() }
+        scope.launch { readLoop() }
         scope.launch { stderrLoop() }
         val result = request(
             "initialize",
@@ -502,6 +511,13 @@ class CodexRpcClient(
         approvalPolicy = result.string("approvalPolicy"),
         approvalsReviewer = result.string("approvalsReviewer"),
         permissionProfile = result.obj("activePermissionProfile")?.string("id"),
+        isTurnRunning = when (val status = thread?.get("status")) {
+            is JsonObject -> status.string("type")?.let { it == "active" || it == "inProgress" }
+            is JsonPrimitive -> status.contentOrNull?.let { it == "active" || it == "inProgress" }
+            else -> null
+        },
+        activeTurnId = (result.obj("initialTurnsPage")?.array("data") ?: thread?.array("turns"))
+            ?.mapNotNull { it.asObject() }?.lastOrNull { it.string("status") == "inProgress" }?.string("id"),
     )
 
     suspend fun loadOlderThreadHistory(threadId: String, cursor: String): RemoteThreadHistoryPage {
@@ -589,19 +605,40 @@ class CodexRpcClient(
     }
 
     suspend fun request(method: String, params: JsonObject = buildJsonObject {}): JsonObject {
-        check(!closed) { "The remote connection is closed" }
+        if (closed.get()) throw IOException("The remote connection is closed", failure.value)
         val id = requestId.getAndIncrement().toString()
         val deferred = CompletableDeferred<JsonObject>()
         pending[id] = deferred
         try {
-            send(buildJsonObject {
-                put("method", method)
-                put("id", id.toLong())
-                put("params", params)
-            })
-            return deferred.await()
+            // Register before checking again so a concurrent close cannot strand this request.
+            if (closed.get()) throw IOException("The remote connection is closed", failure.value)
+            return withTimeout(requestTimeoutMillis) {
+                send(buildJsonObject {
+                    put("method", method)
+                    put("id", id.toLong())
+                    put("params", params)
+                })
+                deferred.await()
+            }
+        } catch (error: TimeoutCancellationException) {
+            val failure = IOException("Remote request timed out; connection lost", error)
+            fail(failure)
+            throw failure
         } finally {
             pending.remove(id)
+        }
+    }
+
+    /** Proves the app-server is responding, including when TCP has silently gone stale. */
+    suspend fun checkHealth() {
+        try {
+            withTimeout(healthTimeoutMillis) { readAccount() }
+        } catch (error: TimeoutCancellationException) {
+            val failure = IOException("Remote app-server did not respond to the connection check", error)
+            fail(failure)
+            throw failure
+        } catch (_: RpcException) {
+            // A JSON-RPC error is also proof the remote reader is alive.
         }
     }
 
@@ -616,8 +653,13 @@ class CodexRpcClient(
     })
 
     private suspend fun send(message: JsonObject) = writeMutex.withLock {
-        withContext(Dispatchers.IO) {
-            transport.writeMessage(json.encodeToString(JsonObject.serializer(), message))
+        try {
+            withContext(Dispatchers.IO) {
+                transport.writeMessage(json.encodeToString(JsonObject.serializer(), message))
+            }
+        } catch (error: IOException) {
+            fail(error)
+            throw error
         }
     }
 
@@ -656,19 +698,11 @@ class CodexRpcClient(
                 val params = message.obj("params") ?: buildJsonObject {}
                 if (id != null) handleServerRequest(id, method, params) else handleNotification(method, params)
             }
-            _events.emit(AppServerEvent.Failure("Remote app-server disconnected", disconnected = true))
+            fail(IOException("Remote app-server disconnected"))
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Throwable) {
-            _events.emit(AppServerEvent.Failure(error.message ?: "SSH stream interrupted", disconnected = true))
-        } finally {
-            closed = true
-            val error = RpcException("Remote connection closed")
-            pending.values.forEach { it.completeExceptionally(error) }
-            pending.clear()
-            approvals.clear()
-            approvalChanges.clear()
-            transport.close()
+        } catch (error: Exception) {
+            fail(error)
         }
     }
 
@@ -685,8 +719,7 @@ class CodexRpcClient(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            _events.emit(AppServerEvent.Failure(error.message ?: "Remote diagnostic stream failed", disconnected = true))
-            transport.close()
+            fail(error)
         }
     }
 
@@ -1442,9 +1475,17 @@ class CodexRpcClient(
         }
     }
 
-    override fun close() {
-        closed = true
-        readerJob?.cancel()
+    private fun fail(error: Throwable) = terminate(error)
+
+    override fun close() = terminate(null)
+
+    private fun terminate(error: Throwable?) {
+        if (!closed.compareAndSet(false, true)) return
+        _failure.value = error
+        val reason = IOException("Remote connection closed", error)
+        pending.values.forEach { it.completeExceptionally(reason) }
+        pending.clear()
+        approvals.clear()
         scope.cancel()
         transport.close()
     }
