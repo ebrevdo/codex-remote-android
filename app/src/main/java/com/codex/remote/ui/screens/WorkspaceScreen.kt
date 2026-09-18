@@ -1773,14 +1773,17 @@ internal fun String.isTimelineItemRunning(): Boolean =
         equals("running", ignoreCase = true) ||
         equals("started", ignoreCase = true)
 
+private const val MAX_MARKDOWN_CHARS = 256 * 1024
+
 @Composable
 private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val latexTextSize = with(density) { MaterialTheme.typography.bodyLarge.fontSize.toPx() }
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     var pendingLink by remember { mutableStateOf<String?>(null) }
     pendingLink?.let { url -> ExternalLinkDialog(url, "Open external link") { pendingLink = null } }
-    val markwon = remember(context, latexTextSize) {
+    val markwon = remember(context, latexTextSize, textColor) {
         Markwon.builder(context)
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
@@ -1788,12 +1791,14 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
                 }
             })
             .usePlugin(MarkwonInlineParserPlugin.create())
-            .usePlugin(JLatexMathPlugin.create(latexTextSize) { builder -> builder.inlinesEnabled(true) })
+            .usePlugin(JLatexMathPlugin.create(latexTextSize) { builder ->
+                builder.inlinesEnabled(true)
+                builder.theme().textColor(textColor)
+            })
             .usePlugin(StrikethroughPlugin.create())
             .usePlugin(TablePlugin.create(context))
             .build()
     }
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
     val rendered = remember(text) { normalizeLatexMarkdown(text) }
     AndroidView(
         factory = { viewContext ->
@@ -1806,7 +1811,7 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
         },
         update = { textView ->
             textView.setTextColor(textColor)
-            if (rendered.length <= 32 * 1024) {
+            if (rendered.length <= MAX_MARKDOWN_CHARS) {
                 markwon.setMarkdown(textView, rendered)
             } else {
                 textView.text = rendered
@@ -1817,7 +1822,9 @@ private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
 }
 
 internal fun normalizeLatexMarkdown(markdown: String): String {
-    if ('$' !in markdown) return markdown
+    // Long messages already use plain text; avoid preprocessing content we will not render.
+    if (markdown.length > MAX_MARKDOWN_CHARS) return markdown
+    if ('$' !in markdown && "\\(" !in markdown && "\\[" !in markdown) return markdown
     val output = StringBuilder(markdown.length + 16)
     var index = 0
     var fenceCharacter: Char? = null
@@ -1848,9 +1855,40 @@ internal fun normalizeLatexMarkdown(markdown: String): String {
             index = runEnd
             continue
         }
-        if (fenceCharacter != null || inlineBackticks > 0 || character != '$' || markdown.isEscapedAt(index)) {
+        val displayMath = markdown.startsWith("\\[", index)
+        val inlineMath = markdown.startsWith("\\(", index)
+        if (fenceCharacter != null || inlineBackticks > 0 ||
+            (!displayMath && !inlineMath && character != '$') || markdown.isEscapedAt(index)
+        ) {
             output.append(character)
             index++
+            continue
+        }
+        if (displayMath || inlineMath) {
+            val closingDelimiter = if (displayMath) "\\]" else "\\)"
+            var closing = markdown.indexOf(closingDelimiter, index + 2)
+            while (closing >= 0 && markdown.isEscapedAt(closing)) {
+                closing = markdown.indexOf(closingDelimiter, closing + 2)
+            }
+            if (closing < 0) {
+                // Keep partial streamed math verbatim until its closing delimiter arrives.
+                output.append(markdown, index, markdown.length)
+                break
+            }
+            val latex = markdown.substring(index + 2, closing)
+            if (latex.isBlank()) {
+                output.append(markdown, index, closing + 2)
+            } else if (displayMath) {
+                // Markwon recognizes display math only with markers on separate lines.
+                if (output.isNotEmpty() && output.last() != '\n') output.append('\n')
+                output.append("$$\n").append(latex.trim('\r', '\n'))
+                if (output.last() != '\n') output.append('\n')
+                output.append("$$")
+                if (closing + 2 < markdown.length && markdown[closing + 2] != '\n') output.append('\n')
+            } else {
+                output.append("$$").append(latex).append("$$")
+            }
+            index = closing + 2
             continue
         }
         if (markdown.startsWith("$$", index)) {
@@ -1867,7 +1905,8 @@ internal fun normalizeLatexMarkdown(markdown: String): String {
         while (closing < markdown.length && markdown[closing] != '\n') {
             if (markdown[closing] == '$' && !markdown.isEscapedAt(closing) &&
                 markdown.getOrNull(closing - 1)?.isWhitespace() == false &&
-                markdown.getOrNull(closing + 1) != '$'
+                markdown.getOrNull(closing + 1) != '$' &&
+                markdown.getOrNull(closing + 1)?.isDigit() != true
             ) {
                 break
             }

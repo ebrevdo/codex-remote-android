@@ -86,7 +86,7 @@ commit; a future schema extension requires an explicit client update.
 - Approval params and associated file-change details: 64 Ki characters each;
   approval nesting: 32; at most 32 cached file-change events and pending requests.
 - Automatic catalog/history pagination: 100 pages. Repeated cursors also fail.
-- Messages longer than 32 Ki characters use plain selectable text instead of
+- Messages longer than 256 Ki characters use plain selectable text instead of
   rich Markdown/LaTeX rendering.
 
 These limits can reject unusually large legitimate histories or outputs. They
