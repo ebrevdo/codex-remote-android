@@ -32,7 +32,7 @@ boundary. The app's cleartext-network policy is unchanged.
 
 The RPC client has a message-based transport boundary; per-connection mode keeps
 its bounded JSONL reader. JSON validation, approval review, host-key pinning,
-modern SSH algorithms, and existing RPC session limits apply in both modes.
+modern SSH algorithms, and RPC rate limits apply in both modes.
 
 ## Daemon ownership
 
@@ -52,8 +52,9 @@ connection loss; the existing app's reconnect/resume behavior still applies.
 - Incoming WebSocket frame and reassembled message: 4 MiB.
 - Fragmented message: at most 1,024 fragments, including empty fragments.
 - Buffered decoded messages: at most 128 and at most 4 Mi characters combined.
-- Per connection: 64 MiB of WebSocket wire input and 100,000 frames (including
-  control frames), in addition to the RPC character/message limits.
+- WebSocket traffic: burst budgets of 64 MiB of wire input and 100,000 frames
+  (including control frames), replenished continuously at those amounts per minute,
+  in addition to the RPC character/message rate limits. No lifetime traffic cap.
 - Outgoing JSON: 64 MiB encoded as UTF-8, fragmented into frames of at most 1 MiB;
   write deadline: 15 seconds. Very large image combinations can exceed this cap.
 - Compression/extensions and subprotocols are not negotiated; unsolicited ones

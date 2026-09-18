@@ -1,5 +1,6 @@
 package com.codex.remote.data.ssh
 
+import com.codex.remote.data.security.InputRateLimit
 import com.codex.remote.data.security.InputLimitExceededException
 import org.java_websocket.WebSocket
 import org.java_websocket.WebSocketAdapter
@@ -35,7 +36,7 @@ internal class WebSocketMessageStream(
     private val closed = AtomicBoolean(false)
     private val messages = ArrayDeque<String>()
     private var queuedChars = 0
-    private var receivedBytes = 0L
+    private val inputRate = InputRateLimit(64L * 1024 * 1024, "WebSocket traffic")
     private var handshakeBytes = 0
     private var handshakeComplete = false
     private var failure: IOException? = null
@@ -108,8 +109,7 @@ internal class WebSocketMessageStream(
         if (count == 0) return true
         synchronized(lock) {
             if (closed.get()) return false
-            receivedBytes += count
-            if (receivedBytes > MAX_SESSION_BYTES) throw InputLimitExceededException("WebSocket session exceeded its input limit. Reconnect to continue.")
+            inputRate.consume(count.toLong())
             if (!engine.isOpen) {
                 handshakeBytes += count
                 if (handshakeBytes > MAX_HANDSHAKE_BYTES) throw InputLimitExceededException("WebSocket handshake exceeds 16 KiB")
@@ -193,12 +193,16 @@ internal class WebSocketMessageStream(
     /** The library bounds bytes; also bound zero-length fragments and control-frame floods. */
     private class BoundedDraft(private val messageLimit: Int) : Draft_6455(emptyList(), messageLimit) {
         private var fragments = 0
-        private var frames = 0
+        private val frameRate = InputRateLimit(100_000, "WebSocket frames")
 
         override fun copyInstance(): Draft = BoundedDraft(messageLimit)
 
         override fun processFrame(socket: WebSocketImpl, frame: Framedata) {
-            if (++frames > MAX_SESSION_FRAMES) throw LimitExceededException("WebSocket frame limit exceeded", MAX_SESSION_FRAMES)
+            try {
+                frameRate.consume()
+            } catch (error: InputLimitExceededException) {
+                throw LimitExceededException(error.message, 100_000)
+            }
             when (frame.opcode) {
                 Opcode.BINARY -> throw InvalidDataException(CloseFrame.REFUSE, "Expected JSON text")
                 Opcode.TEXT, Opcode.CONTINUOUS -> {
@@ -213,8 +217,6 @@ internal class WebSocketMessageStream(
 
     companion object {
         private const val MAX_HANDSHAKE_BYTES = 16 * 1024
-        private const val MAX_SESSION_BYTES = 64L * 1024 * 1024
-        private const val MAX_SESSION_FRAMES = 100_000
         private const val MAX_FRAGMENTS = 1024
         private const val MAX_QUEUED_MESSAGES = 128
         private const val MAX_OUTGOING_BYTES = 64 * 1024 * 1024

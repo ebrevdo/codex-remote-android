@@ -2,6 +2,7 @@ package com.codex.remote.data.rpc
 
 import com.codex.remote.BuildConfig
 import com.codex.remote.data.ssh.ActiveSshTransport
+import com.codex.remote.data.security.InputRateLimit
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ApprovalQuestion
 import com.codex.remote.data.security.MAX_APPROVAL_CHARS
@@ -622,14 +623,12 @@ class CodexRpcClient(
 
     private suspend fun readLoop() {
         try {
-            var receivedChars = 0L
-            var receivedLines = 0
+            val characterRate = InputRateLimit(64L * 1024 * 1024, "RPC traffic")
+            val messageRate = InputRateLimit(100_000, "RPC messages")
             while (true) {
                 val line = transport.readMessage() ?: break
-                receivedChars += line.length
-                check(receivedChars <= 64L * 1024 * 1024 && ++receivedLines <= 100_000) {
-                    "Remote session exceeded its input limit. Reconnect to continue."
-                }
+                characterRate.consume(line.length.toLong())
+                messageRate.consume()
                 checkJsonDepth(line)
                 if (line.isBlank()) continue
                 val message = runCatching { json.parseToJsonElement(line).jsonObject }.getOrNull()
@@ -675,11 +674,12 @@ class CodexRpcClient(
 
     private suspend fun stderrLoop() {
         try {
-            var receivedChars = 0L
+            val characterRate = InputRateLimit(2L * 1024 * 1024, "Remote diagnostics")
+            val lineRate = InputRateLimit(10_000, "Remote diagnostic lines")
             while (true) {
                 val line = transport.errorReader.readLineBounded(16 * 1024) ?: break
-                receivedChars += line.length + 1
-                check(receivedChars <= 2L * 1024 * 1024) { "Remote diagnostics exceeded the session limit" }
+                characterRate.consume(line.length.toLong() + 1)
+                lineRate.consume()
                 if (line.isNotBlank()) _events.emit(AppServerEvent.Diagnostic(line))
             }
         } catch (cancelled: CancellationException) {

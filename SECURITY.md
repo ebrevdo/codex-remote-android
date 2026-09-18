@@ -76,9 +76,10 @@ commit; a future schema extension requires an explicit client update.
 ## Input limits
 
 - RPC line: 4 Mi characters; JSON nesting: 64 levels.
-- Per connection: 64 Mi incoming RPC characters or 100,000 lines, whichever is
-  reached first. Reconnect to continue after the limit.
-- Diagnostic line: 16 Ki characters; diagnostic session: 2 Mi characters.
+- RPC traffic: a burst budget of 64 Mi characters and 100,000 messages, replenished
+  continuously at those amounts per minute. No cumulative connection lifetime cap.
+- Diagnostic line: 16 Ki characters; diagnostic traffic: 2 Mi characters and 10,000
+  lines per minute, with burst budgets of the same size.
 - Preflight stdout and stderr: 64 KiB each.
 - Image: 20 MiB, enforced while reading even if its provider reports a false size;
   the existing four-image limit remains.
