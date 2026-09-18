@@ -89,7 +89,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Unarchive
@@ -2368,16 +2368,6 @@ private fun Composer(
                             }
                             Spacer(Modifier.width(4.dp))
                         }
-                        if (state.isTurnRunning) {
-                            IconButton(
-                                onClick = onStop,
-                                enabled = state.activeTurnId != null,
-                                modifier = Modifier.size(34.dp),
-                            ) {
-                                Icon(Icons.Outlined.Stop, contentDescription = "Stop")
-                            }
-                            Spacer(Modifier.width(4.dp))
-                        }
                         ContextUsageRing(
                             usage = state.threadTokenUsage,
                             onClick = onShowStatus,
@@ -2415,6 +2405,16 @@ private fun Composer(
                             )
                         }
                         Spacer(Modifier.width(3.dp))
+                        if (state.isTurnRunning) {
+                            IconButton(
+                                onClick = onStop,
+                                enabled = state.activeTurnId != null,
+                                modifier = Modifier.size(34.dp),
+                            ) {
+                                Icon(Icons.Filled.Stop, contentDescription = "Stop")
+                            }
+                            Spacer(Modifier.width(4.dp))
+                        }
                         Surface(
                             modifier = Modifier.size(34.dp),
                             shape = CircleShape,
