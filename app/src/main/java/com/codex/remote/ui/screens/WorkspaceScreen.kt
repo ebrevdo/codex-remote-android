@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.widget.TextView
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
@@ -140,6 +141,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
@@ -249,6 +251,13 @@ fun WorkspaceScreen(
 ) {
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    fun openProjects() {
+        focusManager.clearFocus()
+        keyboardController?.hide()
+        scope.launch { drawerState.open() }
+    }
     val uriHandler = LocalUriHandler.current
     var renameTarget by remember { mutableStateOf<RemoteThread?>(null) }
     var archiveTarget by remember { mutableStateOf<RemoteThread?>(null) }
@@ -260,6 +269,9 @@ fun WorkspaceScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= 840.dp
+        // The projects list is the phone's navigation surface. The drawer handles
+        // Back itself while open; dialogs and menus retain their own dismissal.
+        BackHandler(enabled = !wide && drawerState.isClosed) { openProjects() }
         if (wide) {
             Row(Modifier.fillMaxSize()) {
                 WorkspaceSidebar(
@@ -320,6 +332,7 @@ fun WorkspaceScreen(
                 drawerState = drawerState,
                 drawerContent = {
                     ModalDrawerSheet(
+                        drawerState = drawerState,
                         modifier = Modifier.width(304.dp),
                         drawerContainerColor = MaterialTheme.colorScheme.surfaceVariant,
                     ) {
@@ -357,7 +370,7 @@ fun WorkspaceScreen(
                 WorkspaceContent(
                     state = state,
                     showMenu = true,
-                    onMenu = { scope.launch { drawerState.open() } },
+                    onMenu = ::openProjects,
                     onSend = onSend,
                     onStop = onStop,
                     onLoadOlderHistory = onLoadOlderHistory,

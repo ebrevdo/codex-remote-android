@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -63,6 +64,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -73,6 +75,31 @@ import kotlin.math.abs
 class WorkspaceDeviceTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun backOpensProjectsWithoutFinishingTheConversationOrLosingTheDraft() {
+        assumeTrue(composeRule.activity.resources.configuration.screenWidthDp < 840)
+        val initial = baseState(
+            timeline = listOf(TimelineItem("running-message", TimelineKind.AGENT, body = "Working on the task")),
+            isTurnRunning = true,
+        )
+        val state = mutableStateOf(initial)
+        show(state)
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Keep this draft")
+        composeRule.runOnIdle {
+            composeRule.activity.onBackPressedDispatcher.onBackPressed()
+            assertFalse(composeRule.activity.isFinishing)
+        }
+        composeRule.onNodeWithText("PROJECTS").assertIsDisplayed()
+        composeRule.onNodeWithText("Search tasks").assertIsDisplayed()
+        composeRule.runOnIdle { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertIsDisplayed().assertTextContains("Keep this draft")
+        composeRule.onNodeWithTag("timeline-agent-running-message").assertExists()
+        composeRule.runOnIdle {
+            assertEquals(initial, state.value)
+            assertFalse(composeRule.activity.isFinishing)
+        }
+    }
 
     @Test
     fun connectionChecksAndRecoveryAreVisibleOnTheMainScreen() {
