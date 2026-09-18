@@ -69,6 +69,7 @@ fun CodexRemoteApp(viewModel: AppViewModel) {
             onSetCollaborationMode = viewModel::setCollaborationMode,
             onSetPermissionProfile = viewModel::setPermissionProfile,
             onSetPermissionMode = viewModel::setPermissionMode,
+            readRemoteFile = viewModel::readRemoteFile,
             onLoadRemoteDirectory = viewModel::loadRemoteDirectory,
             onClearRemoteDirectory = viewModel::clearRemoteDirectory,
             onStartLogin = viewModel::startRemoteLogin,

@@ -62,6 +62,21 @@ recovers. The selected conversation is reattached and refreshed without replayin
 messages, commands or approval responses. Host-key, credential and security-limit
 failures require manual attention. See [connection recovery](docs/CONNECTION_RECOVERY.md).
 
+## File previews
+
+Tap a file link in an assistant message to preview it from the connected SSH host.
+Markdown files use the same renderer as chat, including tables and math. Other
+UTF-8 text files use a selectable, numbered source view. Relative links resolve from the
+conversation directory, or from the current document when following a nested link.
+Source references such as `report.md:20`, `report.md:20:7` or `report.md#L20`
+open the numbered source at line 20 and highlight it. References past the end
+land on the last line. For Markdown, switch between **Source** and **Preview**
+without fetching the file again. Preview renders the complete document; column
+positions and line-range endings are not used.
+
+The SSH server must provide SFTP. Previews are read-only and limited to regular
+UTF-8 text files of at most 256 KiB. No new login or dependency is required.
+
 ## Install
 
 Download the signed APK from the latest

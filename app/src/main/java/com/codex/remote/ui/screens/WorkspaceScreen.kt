@@ -125,6 +125,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -152,6 +153,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.codex.remote.data.security.parseRemoteFileLink
 import com.codex.remote.data.security.readBytesBounded
 import com.codex.remote.data.security.reviewApproval
 import com.codex.remote.data.security.validatedBrowserUrl
@@ -234,6 +236,7 @@ fun WorkspaceScreen(
     onSetCollaborationMode: (String) -> Unit,
     onSetPermissionProfile: (String?) -> Unit,
     onSetPermissionMode: (PermissionMode) -> Unit,
+    readRemoteFile: suspend (String) -> String,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
@@ -302,6 +305,7 @@ fun WorkspaceScreen(
                     onSetCollaborationMode = onSetCollaborationMode,
                     onSetPermissionProfile = onSetPermissionProfile,
                     onSetPermissionMode = onSetPermissionMode,
+                    readRemoteFile = readRemoteFile,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -377,6 +381,7 @@ fun WorkspaceScreen(
                     onSetCollaborationMode = onSetCollaborationMode,
                     onSetPermissionProfile = onSetPermissionProfile,
                     onSetPermissionMode = onSetPermissionMode,
+                    readRemoteFile = readRemoteFile,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -799,6 +804,7 @@ private fun WorkspaceContent(
     onSetCollaborationMode: (String) -> Unit,
     onSetPermissionProfile: (String?) -> Unit,
     onSetPermissionMode: (PermissionMode) -> Unit,
+    readRemoteFile: suspend (String) -> String,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
@@ -818,6 +824,23 @@ private fun WorkspaceContent(
     var followLatest by remember(conversationKey) { mutableStateOf(true) }
     var hasPositionedConversation by remember(conversationKey) { mutableStateOf(false) }
     val currentThread = state.threads.firstOrNull { it.id == state.selectedThreadId }
+    var previewLink by remember(state.activeConnection?.id, conversationKey, state.connectionStatus) {
+        mutableStateOf<PreviewLink?>(null)
+    }
+    previewLink?.let { link ->
+        val file = remember(link) { parseRemoteFileLink(link.target, link.baseDirectory) }
+        if (file == null) {
+            ExternalLinkDialog(link.target, "Open external link") { previewLink = null }
+        } else {
+            RemoteFilePreviewDialog(
+                file = file,
+                readFile = readRemoteFile,
+                onOpenLink = { previewLink = PreviewLink(it, file.directory) },
+                onDismiss = { previewLink = null },
+            )
+        }
+    }
+
     val canCompose = state.connectionStatus == ConnectionStatus.CONNECTED && !state.isCheckingConnection &&
         state.remoteAccount?.canRunCodex == true &&
         state.models.isNotEmpty() &&
@@ -916,6 +939,9 @@ private fun WorkspaceContent(
                         onFollowLatestChange = { followLatest = it },
                         hasPositionedConversation = hasPositionedConversation,
                         onConversationPositioned = { hasPositionedConversation = true },
+                        onOpenLink = { link ->
+                            previewLink = PreviewLink(link, currentThread?.cwd ?: state.selectedProjectPath.orEmpty())
+                        },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                         onLoadOlderHistory = onLoadOlderHistory,
                     )
@@ -1151,6 +1177,7 @@ private fun Conversation(
     onConversationPositioned: () -> Unit,
     modifier: Modifier,
     onLoadOlderHistory: () -> Unit,
+    onOpenLink: (String) -> Unit,
 ) {
     val conversationKey = state.selectedThreadId ?: "project:${state.selectedProjectPath.orEmpty()}"
     val scrollScope = rememberCoroutineScope()
@@ -1398,7 +1425,7 @@ private fun Conversation(
                     Modifier.fillMaxWidth().testTag("timeline-item-${presentation.item.id}"),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    TimelineRow(presentation.item, Modifier.fillMaxWidth().widthIn(max = 820.dp))
+                    TimelineRow(presentation.item, Modifier.fillMaxWidth().widthIn(max = 820.dp), onOpenLink)
                 }
             }
             if (state.isTurnRunning && presentationTimeline.lastOrNull()?.item?.kind != TimelineKind.AGENT) {
@@ -1473,7 +1500,7 @@ private const val MAX_BOTTOM_SCROLL_STEPS = 1_000
 private const val BOTTOM_LAYOUT_SETTLE_FRAMES = 8
 
 @Composable
-private fun TimelineRow(item: TimelineItem, modifier: Modifier) {
+private fun TimelineRow(item: TimelineItem, modifier: Modifier, onOpenLink: (String) -> Unit) {
     when (item.kind) {
         TimelineKind.USER -> Row(modifier, horizontalArrangement = Arrangement.End) {
             Surface(
@@ -1507,7 +1534,7 @@ private fun TimelineRow(item: TimelineItem, modifier: Modifier) {
             }
         }
         TimelineKind.AGENT -> Column(modifier) {
-            MarkdownBody(item.body, Modifier.testTag("timeline-agent-${item.id}"))
+            MarkdownBody(item.body, Modifier.testTag("timeline-agent-${item.id}"), onOpenLink)
         }
         TimelineKind.REASONING -> ExpandableTool(
             modifier,
@@ -1776,18 +1803,17 @@ internal fun String.isTimelineItemRunning(): Boolean =
 private const val MAX_MARKDOWN_CHARS = 256 * 1024
 
 @Composable
-private fun MarkdownBody(text: String, modifier: Modifier = Modifier) {
+internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLink: (String) -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val latexTextSize = with(density) { MaterialTheme.typography.bodyLarge.fontSize.toPx() }
     val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    var pendingLink by remember { mutableStateOf<String?>(null) }
-    pendingLink?.let { url -> ExternalLinkDialog(url, "Open external link") { pendingLink = null } }
+    val openLink by rememberUpdatedState(onOpenLink)
     val markwon = remember(context, latexTextSize, textColor) {
         Markwon.builder(context)
             .usePlugin(object : AbstractMarkwonPlugin() {
                 override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
-                    builder.linkResolver { _, link -> pendingLink = link }
+                    builder.linkResolver { _, link -> openLink(link) }
                 }
             })
             .usePlugin(MarkwonInlineParserPlugin.create())

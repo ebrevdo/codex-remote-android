@@ -40,6 +40,8 @@ class ActiveSshTransport internal constructor(
 ) : AppServerTransport {
     override val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
 
+    override suspend fun readRemoteFile(path: String): String = readRemoteTextFile(ssh, path)
+
     override fun readMessage(): String? = messages.readMessage()
     override fun writeMessage(message: String) = withIoDeadline(15_000, ::close) {
         messages.writeMessage(message)

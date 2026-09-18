@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     codex = shutil.which("codex")
     sshd = shutil.which("sshd")
+    sftp_server = shutil.which("sftp-server", path="/usr/lib/openssh:/usr/libexec/openssh:/usr/lib/ssh")
+    if not sftp_server:
+        raise SystemExit("Install the OpenSSH SFTP server before running this test.")
     if not codex or not sshd or not shutil.which("ssh-keygen"):
         raise SystemExit("Install Codex and OpenSSH server/client before running this opt-in test.")
     with tempfile.TemporaryDirectory(prefix=".codex-ssh-", dir=Path.home()) as directory:
@@ -34,6 +37,7 @@ def main():
         codex_home = work / "home"
         settings_dir = codex_home / "app-server-daemon"
         settings_dir.mkdir(parents=True)
+        (codex_home / "config.toml").write_text("[features]\nplugins = false\n")
         (settings_dir / "settings.json").write_text(json.dumps({
             "remoteControlEnabled": False,
             "shutdownGraceSeconds": 0,
@@ -53,9 +57,11 @@ def main():
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
         forced = work / "command.py"
-        # Tokenize and allow only the app's precise Codex commands. Never execute
+        # Allow the read-only SFTP subsystem and the app's precise Codex commands. Never execute
         # client-provided shell text. Shell quoting is separately regression-tested.
         forced.write_text("import os, shlex\n" +
+            "if os.environ.get('SSH_ORIGINAL_COMMAND') == 'codex-remote-test-sftp':\n" +
+            f"    os.execv({sftp_server!r}, [{sftp_server!r}, '-R'])\n" +
             "outer = shlex.split(os.environ.get('SSH_ORIGINAL_COMMAND', ''))\n" +
             "assert len(outer) == 4 and outer[:3] == ['exec', '${SHELL:-/bin/sh}', '-lc']\n" +
             "args = shlex.split(outer[3])\n" +
@@ -83,11 +89,17 @@ DisableForwarding yes
 PermitTTY no
 MaxAuthTries 2
 MaxSessions 4
+Subsystem sftp codex-remote-test-sftp
 ForceCommand {shlex.quote(shutil.which('python3'))} {shlex.quote(str(forced))}
 """)
+        text_file = work / "report $(false); 'draft'.md"
+        text_file.write_text("# SFTP preview\n\n**Works** without executing a shell.\n")
+        (work / "large.txt").write_bytes(b"x" * (256 * 1024 + 1))
+        (work / "binary.bin").write_bytes(b"binary\0data")
+        os.mkfifo(work / "pipe")
         fixture = work / "fixture.json"
         fixture.write_text(json.dumps({"port": port, "username": getpass.getuser(),
-            "privateKey": str(work / "client"), "fingerprint": fingerprint, "codexHome": str(codex_home)}))
+            "privateKey": str(work / "client"), "fingerprint": fingerprint, "codexHome": str(codex_home), "previewFile": str(text_file), "previewDirectory": str(work)}))
         fixture.chmod(0o600)
         server = subprocess.Popen([sshd, "-D", "-f", str(config), "-E", str(work / "sshd.log")])
         try:
@@ -102,7 +114,7 @@ ForceCommand {shlex.quote(shutil.which('python3'))} {shlex.quote(str(forced))}
             else:
                 raise RuntimeError("Private SSH server did not become ready")
             env = dict(os.environ, CODEX_REMOTE_SSH_TEST_FIXTURE=str(fixture))
-            subprocess.run([str(ROOT / "gradlew"), "testDebugUnitTest", "--tests",
+            subprocess.run([str(ROOT / "gradlew"), "testDebugUnitTest", "--rerun", "--tests",
                 "com.codex.remote.data.ssh.DaemonSshIntegrationTest", "--offline",
                 "--dependency-verification", "strict", "--console", "plain"],
                 cwd=ROOT, env=env, check=True, timeout=240)
@@ -110,7 +122,7 @@ ForceCommand {shlex.quote(shutil.which('python3'))} {shlex.quote(str(forced))}
             result = ET.parse(report).getroot().attrib
             if result.get("tests") != "1" or any(result.get(key) != "0" for key in ("skipped", "failures", "errors")):
                 raise RuntimeError("Integration test did not run successfully: " + repr(result))
-            print("PASS: real OpenSSH + Codex daemon/proxy, daemon reuse after disconnect, and stdio compatibility")
+            print("PASS: real OpenSSH file previews and error isolation, Codex daemon reuse, and stdio compatibility")
         except Exception:
             print((work / "sshd.log").read_text())
             raise

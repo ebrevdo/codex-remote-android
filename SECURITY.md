@@ -64,7 +64,7 @@ test results, dependency counts and verified signer fingerprints.
 | Plaintext private-key cache files | SSHJ loads PEM/OpenSSH keys from memory. One-off passphrase character arrays are cleared. Old matching cache files are removed before connecting. JVM strings cannot be reliably erased from memory. |
 | Legacy SSH negotiation | Explicit allowlists exclude SHA-1 signatures/KEX, DSA, group1, CBC, RC4 and non-encrypt-then-MAC algorithms. AES-GCM/CTR, ChaCha20, SHA-2, ECDH, Curve25519 and modern RSA/Ed25519 signatures remain. Old servers may stop connecting. |
 | Unbounded incoming data | Limits are applied during reads, before whole inputs are allocated. See the limits below. Excessive input closes the SSH transport. |
-| Unrestricted browser launches | MCP authorization and Markdown links require a destination confirmation and HTTPS on port 443. Userinfo, ambiguous authorities, controls and custom/intent schemes are blocked. Device login only accepts the documented OpenAI device page. |
+| Unrestricted browser launches | MCP authorization and web links require a destination confirmation and HTTPS on port 443. Remote-file references open an in-app read-only preview over the authenticated SSH connection. Userinfo, ambiguous authorities, controls and custom/intent schemes are blocked. Device login only accepts the documented OpenAI device page. |
 | Development SSH helper exposure | Helpers bind only to loopback IPs, require explicit credentials, take passwords via a prompt or named environment variable, limit concurrent clients, restrict key/log permissions and omit sensitive protocol payloads from bounded event logs. |
 | Mutable build inputs | Gradle distribution checksum and CI action commit pins are set. Strict dependency lock and artifact verification configuration plus an OSV inventory audit are added; the complete dependency pins and advisory audit are in place. |
 | Mixed interface language | App-owned dialogs, widget resources, labels, errors and dates are English; language splitting is disabled so English resources remain available. Remote/user content and Android-owned pickers retain their original/system language. |
@@ -86,6 +86,11 @@ commit; a future schema extension requires an explicit client update.
 - Approval params and associated file-change details: 64 Ki characters each;
   approval nesting: 32; at most 32 cached file-change events and pending requests.
 - Automatic catalog/history pagination: 100 pages. Repeated cursors also fail.
+- File previews: 256 KiB of UTF-8 text, regular files only. SFTP checks metadata
+  before and after opening, then bounds the actual read even if the file grows.
+  File reads have a 15-second deadline after opening the SSH session channel and
+  a 5-second SFTP request timeout. Dismissal cancels the read. Paths are passed to
+  SFTP as data, never interpolated into shell commands. No file is read until tapped.
 - Messages longer than 256 Ki characters use plain selectable text instead of
   rich Markdown/LaTeX rendering.
 

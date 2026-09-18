@@ -1424,6 +1424,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
+
+    suspend fun readRemoteFile(path: String): String {
+        val client = rpc ?: error("Reconnect to preview files.")
+        val content = client.readRemoteFile(path)
+        check(rpc === client) { "Connection changed. Reopen the file to try again." }
+        return content
+    }
+
     fun loadRemoteDirectory(path: String) {
         val client = rpc ?: return
         if (path.isBlank()) return

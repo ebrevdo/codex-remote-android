@@ -9,6 +9,7 @@ interface AppServerTransport : Closeable {
     val remotePlatform: RemotePlatform
     val codexVersion: String
     val errorReader: BufferedReader
+    suspend fun readRemoteFile(path: String): String = error("File preview is unavailable on this connection.")
     fun readMessage(): String?
     fun writeMessage(message: String)
 }

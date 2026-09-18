@@ -169,6 +169,8 @@ class CodexRpcClient(
         )
     }
 
+    suspend fun readRemoteFile(path: String): String = transport.readRemoteFile(path)
+
     suspend fun readRemoteDirectory(path: String): List<RemotePathEntry> {
         val result = request("fs/readDirectory", buildJsonObject { put("path", path) })
         return result.array("entries").mapNotNull { element ->

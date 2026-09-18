@@ -51,6 +51,12 @@ class DaemonSshIntegrationTest {
                         val info = client.initialize()
                         assertTrue(info.userAgent.isNotBlank())
                         assertEquals(value("codexHome"), info.codexHome)
+                        assertEquals("# SFTP preview\n\n**Works** without executing a shell.\n", client.readRemoteFile(value("previewFile")))
+                        for (name in listOf("large.txt", "binary.bin", "pipe", "missing.txt", ".")) {
+                            val failure = runCatching { client.readRemoteFile("${value("previewDirectory")}/$name") }.exceptionOrNull()
+                            assertTrue("Reject $name", failure is java.io.IOException)
+                        }
+                        client.checkHealth()
                         assertTrue("Only the isolated empty history may be visible", client.listThreads().isEmpty())
                         println("Real Codex initialize + thread/list succeeded using $mode")
                     }

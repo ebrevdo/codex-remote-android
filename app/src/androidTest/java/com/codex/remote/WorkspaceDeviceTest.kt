@@ -2,6 +2,7 @@ package com.codex.remote
 
 import android.graphics.Typeface
 import android.text.Spanned
+import android.text.style.ClickableSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
@@ -178,6 +179,27 @@ class WorkspaceDeviceTest {
         composeRule.onNodeWithText("tool details").assertDoesNotExist()
         scrollTo("file-changes-files")
         composeRule.onNodeWithText("+val ready = true").assertDoesNotExist()
+    }
+
+    @Test
+    fun remoteReportLinksOpenTheExistingMarkdownRenderer() {
+        val path = "/workspace/demo/report.md"
+        var requestedPath: String? = null
+        show(
+            mutableStateOf(baseState(timeline = listOf(TimelineItem("report-link", TimelineKind.AGENT, body = "[Profile report]($path)")))),
+            readRemoteFile = { requestedPath = it; "# Profile\n\n**Rendered report**" },
+        )
+        composeRule.runOnIdle {
+            val view = composeRule.activity.window.decorView.descendantTextViews().first { it.text.toString() == "Profile report" }
+            val text = view.text as Spanned
+            text.getSpans(0, text.length, ClickableSpan::class.java).single().onClick(view)
+        }
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertEquals(path, requestedPath) }
+        composeRule.onNodeWithTag("remote-file-markdown").assertExists()
+        composeRule.onNodeWithText("Open external link").assertDoesNotExist()
+        composeRule.onNodeWithText("Close").performClick()
+        composeRule.onNodeWithTag("remote-file-preview").assertDoesNotExist()
     }
 
     @Test
@@ -471,6 +493,7 @@ val answer = 42
     private fun show(
         state: MutableState<AppUiState>,
         callbacks: WorkspaceCallbacks = WorkspaceCallbacks(),
+        readRemoteFile: suspend (String) -> String = { error("Unexpected file read") },
     ) {
         composeRule.setContent {
             CodexRemoteTheme(darkTheme = false) {
@@ -508,6 +531,7 @@ val answer = 42
                     onSetCollaborationMode = { callbacks.collaborationMode = it },
                     onSetPermissionProfile = {},
                     onSetPermissionMode = { callbacks.permissionMode = it },
+                    readRemoteFile = readRemoteFile,
                     onLoadRemoteDirectory = {},
                     onClearRemoteDirectory = {},
                     onStartLogin = {},
