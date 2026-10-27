@@ -1,6 +1,7 @@
 package com.codex.remote
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.codex.remote.data.rpc.AppServerEvent
@@ -37,6 +38,7 @@ import com.codex.remote.domain.withThreadArchived
 import com.codex.remote.domain.withThreadRenamed
 import com.codex.remote.domain.withNewTask
 import com.codex.remote.domain.withThreadCatalog
+import com.codex.remote.domain.withResumedThread
 import com.codex.remote.domain.defaultCollaborationMode
 import com.codex.remote.data.security.InputLimitExceededException
 import com.codex.remote.data.ssh.HostKeyChangedException
@@ -89,6 +91,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         },
+        nowMillis = SystemClock::elapsedRealtime,
     )
     private var didRestoreLastConnection = false
 
@@ -300,12 +303,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         remoteAccount = account,
                         threads = threads,
                         projects = projects,
-                        selectedProjectPath = previous.selectedProjectPath.takeIf { sameHost } ?: projects.firstOrNull()?.path,
+                        selectedProjectPath = it.selectedProjectPath.takeIf { sameHost } ?: projects.firstOrNull()?.path,
                     )
                 }
                 // Resume subscribes and fetches history. Never replay a turn, command or approval response.
                 val thread = threads.firstOrNull { it.id == previous.selectedThreadId }.takeIf { sameHost } ?: selectedThread
-                if (thread != null) resumeSelectedThread(client, thread)
+                if (thread != null && _state.value.conversationRevision == previous.conversationRevision) {
+                    resumeSelectedThread(client, thread, restoring = true)
+                }
                 currentCoroutineContext().ensureActive()
                 client.failure.value?.let { throw it }
                 _state.update {
@@ -330,12 +335,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setAppForeground(foreground: Boolean) {
-        _state.update { it.copy(isCheckingConnection = foreground && it.connectionStatus == ConnectionStatus.CONNECTED) }
+        if (!foreground) _state.update { it.copy(isCheckingConnection = false) }
         recovery.setForeground(foreground)
     }
 
-    fun onNetworkChanged(available: Boolean) {
-        recovery.networkChanged(available)
+    fun onNetworkChanged(available: Boolean, changed: Boolean = false) {
+        recovery.networkChanged(available, changed)
         if (!available && _state.value.connectionStatus == ConnectionStatus.CONNECTED) {
             connectionFailed(IOException("Network unavailable"))
         }
@@ -343,6 +348,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun checkConnection() {
         val client = rpc ?: return
+        _state.update { it.copy(isCheckingConnection = true) }
         try {
             client.checkHealth()
         } catch (error: CancellationException) {
@@ -494,16 +500,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { resumeSelectedThread(client, thread) }
     }
 
-    private suspend fun resumeSelectedThread(client: CodexRpcClient, thread: RemoteThread) {
+    private suspend fun resumeSelectedThread(client: CodexRpcClient, thread: RemoteThread, restoring: Boolean = false) {
         val projectPath = _state.value.projects
             .firstOrNull { project -> project.threads.any { it.id == thread.id } }
             ?.path
             ?: thread.cwd
         _state.update {
-            it.withNewTask(projectPath).copy(
-                selectedThreadId = thread.id,
-                isGoalLoading = true,
-                isBusy = true,
+            it.withResumedThread(thread, projectPath, restoring).copy(
                 isTurnRunning = thread.status.isRemoteThreadActive(),
             )
         }

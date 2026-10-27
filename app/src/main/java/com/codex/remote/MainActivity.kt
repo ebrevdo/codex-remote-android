@@ -23,21 +23,24 @@ class MainActivity : ComponentActivity() {
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             if (!listeningForNetwork) return
+            val changed = defaultNetwork != network
             defaultNetwork = network
-            appViewModel.onNetworkChanged(true)
+            appViewModel.onNetworkChanged(true, changed)
         }
 
         override fun onLost(network: Network) {
             if (!listeningForNetwork || defaultNetwork != network) return
-            defaultNetwork = null
-            appViewModel.onNetworkChanged(false)
+            defaultNetwork = connectivity.activeNetwork
+            appViewModel.onNetworkChanged(defaultNetwork != null, changed = true)
         }
     }
 
     override fun onStart() {
         super.onStart()
-        defaultNetwork = connectivity.activeNetwork
-        appViewModel.onNetworkChanged(defaultNetwork != null)
+        val currentNetwork = connectivity.activeNetwork
+        val changed = defaultNetwork != currentNetwork
+        defaultNetwork = currentNetwork
+        appViewModel.onNetworkChanged(currentNetwork != null, changed)
         appViewModel.setAppForeground(true)
         listeningForNetwork = true
         connectivity.registerDefaultNetworkCallback(networkCallback, Handler(Looper.getMainLooper()))

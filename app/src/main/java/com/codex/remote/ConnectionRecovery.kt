@@ -11,12 +11,14 @@ internal class ConnectionRecovery(
     private val checkConnection: suspend () -> Unit,
     private val reconnect: () -> Unit,
     private val onWaiting: (delayMillis: Long?) -> Unit,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private enum class Mode { STOPPED, CONNECTING, CONNECTED, RETRY }
     private var mode = Mode.STOPPED
     private var foreground = false
     private var networkAvailable = true
     private var nextRetryMillis = 1_000L
+    private var lastHealthyMillis: Long? = null
     private var job: Job? = null
 
     fun connecting(resetBackoff: Boolean) {
@@ -27,6 +29,7 @@ internal class ConnectionRecovery(
 
     fun connected() {
         mode = Mode.CONNECTED
+        lastHealthyMillis = nowMillis()
         nextRetryMillis = 1_000
         schedule(immediate = false)
     }
@@ -42,8 +45,10 @@ internal class ConnectionRecovery(
         schedule(immediate = value)
     }
 
-    fun networkChanged(available: Boolean) {
+    fun networkChanged(available: Boolean, changed: Boolean = false) {
+        if (networkAvailable == available && !changed) return
         networkAvailable = available
+        lastHealthyMillis = null
         schedule(immediate = available)
     }
 
@@ -70,10 +75,14 @@ internal class ConnectionRecovery(
                 reconnect()
             }
         } else if (mode == Mode.CONNECTED && canRun) {
+            val wait = if (immediate) {
+                lastHealthyMillis?.let { (20_000 - (nowMillis() - it)).coerceIn(0, 20_000) } ?: 0L
+            } else 20_000L
             job = scope.launch {
-                if (!immediate) delay(20_000)
-                while (true) {
+                delay(wait)
+                while (mode == Mode.CONNECTED) {
                     checkConnection()
+                    if (mode == Mode.CONNECTED) lastHealthyMillis = nowMillis()
                     delay(20_000)
                 }
             }

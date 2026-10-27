@@ -59,19 +59,19 @@ class ConnectionRecoveryTest {
 
     @Test fun probesOnReturnAndPeriodicallyButNotInBackground() = runTest {
         var checks = 0
-        val recovery = ConnectionRecovery(backgroundScope, { checks++ }, {}, {})
+        val recovery = ConnectionRecovery(backgroundScope, { checks++ }, {}, {}, nowMillis = { testScheduler.currentTime })
         recovery.connected()
         recovery.setForeground(true)
         runCurrent()
-        assertEquals(1, checks)
+        assertEquals(0, checks)
         advanceTimeBy(20_001)
-        assertEquals(2, checks)
+        assertEquals(1, checks)
         recovery.setForeground(false)
         advanceTimeBy(120_000)
-        assertEquals(2, checks)
+        assertEquals(1, checks)
         recovery.setForeground(true)
         runCurrent()
-        assertEquals(3, checks)
+        assertEquals(2, checks)
     }
 
     @Test fun foregroundChangesCancelOldProbesWithoutOverlappingThem() = runTest {
@@ -81,9 +81,10 @@ class ConnectionRecoveryTest {
             active++
             maxActive = maxOf(maxActive, active)
             try { awaitCancellation() } finally { active-- }
-        }, {}, {})
+        }, {}, {}, nowMillis = { testScheduler.currentTime })
         recovery.connected()
         recovery.setForeground(true)
+        recovery.networkChanged(true, changed = true)
         runCurrent()
         recovery.setForeground(false)
         recovery.setForeground(true)
@@ -92,6 +93,47 @@ class ConnectionRecoveryTest {
         recovery.stop()
         runCurrent()
         assertEquals(0, active)
+    }
+
+    @Test fun quickReturnAndDuplicateNetworkCallbacksKeepTheHealthyConnection() = runTest {
+        var checks = 0
+        var reconnects = 0
+        val recovery = ConnectionRecovery(backgroundScope, { checks++ }, { reconnects++ }, {}, { testScheduler.currentTime })
+        recovery.connected()
+        recovery.setForeground(true)
+        advanceTimeBy(5_000)
+        recovery.setForeground(false)
+        advanceTimeBy(1_000)
+        recovery.networkChanged(true)
+        recovery.setForeground(true)
+        recovery.networkChanged(true)
+        runCurrent()
+        assertEquals(0, checks)
+        assertEquals(0, reconnects)
+        advanceTimeBy(13_999)
+        assertEquals(0, checks)
+        advanceTimeBy(1)
+        runCurrent()
+        assertEquals(1, checks)
+        assertEquals(0, reconnects)
+    }
+
+    @Test fun changedOrRegainedNetworkProbesEvenWhenThePreviousCheckIsFresh() = runTest {
+        var checks = 0
+        val recovery = ConnectionRecovery(backgroundScope, { checks++ }, {}, {}, { testScheduler.currentTime })
+        recovery.connected()
+        recovery.setForeground(true)
+        recovery.networkChanged(true, changed = true)
+        runCurrent()
+        assertEquals(1, checks)
+        recovery.networkChanged(false)
+        advanceTimeBy(1_000)
+        recovery.networkChanged(true)
+        runCurrent()
+        assertEquals(2, checks)
+        recovery.networkChanged(true)
+        runCurrent()
+        assertEquals(2, checks)
     }
 
     @Test fun securityFailuresCannotBeRetriedByNetworkOrForegroundChanges() = runTest {

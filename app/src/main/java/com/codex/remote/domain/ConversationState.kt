@@ -37,3 +37,18 @@ internal fun AppUiState.defaultCollaborationMode(): String =
     collaborationModes.firstOrNull { it.mode == "default" }?.mode
         ?: collaborationModes.firstOrNull()?.mode
         ?: "default"
+
+/** Reconnecting to the same task keeps its composer identity; navigation gets a fresh draft. */
+internal fun AppUiState.withResumedThread(
+    thread: RemoteThread,
+    projectPath: String?,
+    restoring: Boolean = false,
+): AppUiState {
+    val resumed = withNewTask(projectPath)
+    return resumed.copy(
+        conversationRevision = if (restoring && selectedThreadId == thread.id) conversationRevision else resumed.conversationRevision,
+        selectedThreadId = thread.id,
+        isGoalLoading = true,
+        isBusy = true,
+    )
+}

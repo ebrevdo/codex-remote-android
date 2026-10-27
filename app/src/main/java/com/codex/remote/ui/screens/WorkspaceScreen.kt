@@ -251,6 +251,7 @@ fun WorkspaceScreen(
     onRejectHostKey: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
+    val composerDraft = remember(state.activeConnection?.id, state.selectedThreadId, state.conversationRevision) { ComposerDraft() }
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
@@ -294,6 +295,7 @@ fun WorkspaceScreen(
                 HorizontalDivider(Modifier.fillMaxHeight().width(1.dp))
                 WorkspaceContent(
                     state = state,
+                    composerDraft = composerDraft,
                     showMenu = false,
                     onMenu = {},
                     onSend = onSend,
@@ -372,6 +374,7 @@ fun WorkspaceScreen(
             ) {
                 WorkspaceContent(
                     state = state,
+                    composerDraft = composerDraft,
                     showMenu = true,
                     onMenu = ::openProjects,
                     onSend = onSend,
@@ -796,6 +799,7 @@ private fun SidebarAction(icon: ImageVector, label: String, onClick: () -> Unit)
 @Composable
 private fun WorkspaceContent(
     state: AppUiState,
+    composerDraft: ComposerDraft,
     showMenu: Boolean,
     onMenu: () -> Unit,
     onSend: (String, List<ComposerMention>, List<ComposerImageAttachment>, Boolean) -> Unit,
@@ -861,7 +865,7 @@ private fun WorkspaceContent(
         }
     }
 
-    val canCompose = state.connectionStatus == ConnectionStatus.CONNECTED && !state.isCheckingConnection &&
+    val canCompose = state.connectionStatus == ConnectionStatus.CONNECTED &&
         state.remoteAccount?.canRunCodex == true &&
         state.models.isNotEmpty() &&
         (state.selectedProjectPath?.isNotBlank() == true || state.selectedThreadId != null)
@@ -968,6 +972,7 @@ private fun WorkspaceContent(
                     if (canCompose) {
                         Composer(
                             state = state,
+                            draft = composerDraft,
                             onSend = onSend,
                             onStop = onStop,
                             onCompactThread = onCompactThread,
@@ -1999,9 +2004,18 @@ private fun String.isEscapedAt(index: Int): Boolean {
     return slashes % 2 == 1
 }
 
+private class ComposerDraft {
+    val text = mutableStateOf(TextFieldValue())
+    val selectedMentions = mutableStateOf(emptyList<ComposerMention>())
+    val attachments = mutableStateOf(emptyList<ComposerImageAttachment>())
+    val attachmentError = mutableStateOf<String?>(null)
+    val goalModeActive = mutableStateOf(false)
+}
+
 @Composable
 private fun Composer(
     state: AppUiState,
+    draft: ComposerDraft,
     onSend: (String, List<ComposerMention>, List<ComposerImageAttachment>, Boolean) -> Unit,
     onStop: () -> Unit,
     onCompactThread: () -> Unit,
@@ -2027,16 +2041,16 @@ private fun Composer(
     onClearRemoteDirectory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(TextFieldValue()) }
-    var selectedMentions by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(emptyList<ComposerMention>()) }
-    var attachments by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(emptyList<ComposerImageAttachment>()) }
-    var attachmentError by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf<String?>(null) }
+    var text by draft.text
+    var selectedMentions by draft.selectedMentions
+    var attachments by draft.attachments
+    var attachmentError by draft.attachmentError
     var mentionKindFilter by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf<ComposerMentionKind?>(null) }
     var modelSettingsMenu by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
     var modelSettingsPage by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(ModelSettingsPage.ROOT) }
     var addMenuOpen by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
     var showRemotePathPicker by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
-    var goalModeActive by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
+    var goalModeActive by draft.goalModeActive
     var policyMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val composerScope = rememberCoroutineScope()
@@ -2553,7 +2567,7 @@ private fun Composer(
                                         }
                                     }
                                 },
-                                enabled = !state.isBusy && if (goalModeActive || inlineGoalObjective != null) {
+                                enabled = !state.isBusy && !state.isCheckingConnection && if (goalModeActive || inlineGoalObjective != null) {
                                     text.text.isNotBlank() && !state.isTurnRunning && !state.isGoalLoading
                                 } else {
                                     (text.text.isNotBlank() || attachments.isNotEmpty()) &&

@@ -12,6 +12,7 @@ import com.codex.remote.domain.ThreadGoalStatus
 import com.codex.remote.domain.TimelineItem
 import com.codex.remote.domain.TimelineKind
 import com.codex.remote.domain.withNewTask
+import com.codex.remote.domain.withResumedThread
 import com.codex.remote.domain.withThreadArchived
 import com.codex.remote.domain.withThreadCatalog
 import org.junit.Assert.*
@@ -106,6 +107,28 @@ class ConversationStateTest {
         assertNull(selectedArchived.activeTurnId)
         assertNull(selectedArchived.pendingApproval)
         assertEquals(listOf("thread-b"), selectedArchived.threads.map { it.id })
+    }
+
+    @Test
+    fun reconnectResumesTheSameTaskWithoutChangingItsDraftIdentity() {
+        val current = runningState().copy(conversationRevision = 7)
+        val resumed = current.withResumedThread(thread("thread-a"), "/srv/app", restoring = true)
+        assertEquals(current.conversationRevision, resumed.conversationRevision)
+        assertEquals("thread-a", resumed.selectedThreadId)
+        assertTrue(resumed.isBusy)
+        assertTrue(resumed.isGoalLoading)
+        assertNull(resumed.activeTurnId)
+        assertNull(resumed.pendingApproval)
+    }
+
+    @Test
+    fun selectingOrReopeningATaskStillGetsANewDraft() {
+        val current = runningState().copy(conversationRevision = 7)
+        for ((id, restoring) in listOf("thread-a" to false, "thread-b" to false, "thread-b" to true)) {
+            val resumed = current.withResumedThread(thread(id), "/srv/app", restoring)
+            assertEquals(8L, resumed.conversationRevision)
+            assertEquals(id, resumed.selectedThreadId)
+        }
     }
 
     private fun runningState() = AppUiState(

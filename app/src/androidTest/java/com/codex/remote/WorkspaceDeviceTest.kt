@@ -58,6 +58,7 @@ import com.codex.remote.domain.ThreadGoalStatus
 import com.codex.remote.domain.TimelineItem
 import com.codex.remote.domain.TimelineKind
 import com.codex.remote.domain.withNewTask
+import com.codex.remote.domain.withResumedThread
 import com.codex.remote.ui.screens.WorkspaceScreen
 import com.codex.remote.ui.theme.CodexRemoteTheme
 import kotlinx.coroutines.flow.first
@@ -137,6 +138,44 @@ class WorkspaceDeviceTest {
             assertFalse(state.value.isTurnRunning)
             assertNull(state.value.activeTurnId)
         }
+    }
+
+    @Test
+    fun connectionCheckKeepsTheDraftEditableAndOnlyPausesSending() {
+        val state = mutableStateOf(baseState())
+        show(state)
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Keep this draft")
+        composeRule.runOnIdle { state.value = state.value.copy(isCheckingConnection = true) }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertIsDisplayed().assertTextContains("Keep this draft")
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput(" while checking")
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsNotEnabled()
+        composeRule.runOnIdle { state.value = state.value.copy(isCheckingConnection = false) }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertTextContains("Keep this draft while checking")
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsEnabled()
+    }
+
+    @Test
+    fun reconnectRestoresTheSameTaskDraftAndGoalModeBeforeSending() {
+        val state = mutableStateOf(baseState())
+        val callbacks = WorkspaceCallbacks()
+        show(state, callbacks)
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Unsent objective")
+        composeRule.onNodeWithTag(COMPOSER_ADD).performClick()
+        composeRule.onNodeWithText("Goal").performClick()
+        composeRule.runOnIdle {
+            state.value = state.value.copy(connectionStatus = com.codex.remote.domain.ConnectionStatus.CONNECTING, isReconnecting = true)
+        }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertDoesNotExist()
+        composeRule.runOnIdle {
+            state.value = state.value.withResumedThread(state.value.threads.single(), state.value.selectedProjectPath, restoring = true)
+                .copy(connectionStatus = com.codex.remote.domain.ConnectionStatus.CONNECTED, isReconnecting = false)
+        }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertTextContains("Unsent objective")
+        composeRule.onNodeWithTag(COMPOSER_GOAL_MARKER).assertExists()
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsNotEnabled()
+        composeRule.runOnIdle { state.value = state.value.copy(isBusy = false, isGoalLoading = false) }
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(listOf("Unsent objective" to true), callbacks.sentMessages) }
     }
 
     @Test

@@ -4,8 +4,13 @@
 
 Both SSH transports use the same recovery policy. While the app is visible, a
 read-only `account/read` check runs every 20 seconds, with a 10-second response
-budget. Returning to the app or changing the default network triggers an immediate
-check. A JSON-RPC error response still proves the server is reachable. Checks do
+budget. Returning to the app checks immediately only when the last successful check
+or connection is at least 20 seconds old. A quick return on the same network keeps
+the existing connection and waits for the next check. A changed or regained default
+network triggers an immediate check; repeated availability callbacks do not.
+The check age uses Android's [elapsed real-time clock](https://developer.android.com/reference/android/os/SystemClock#elapsedRealtime()),
+which includes device sleep.
+A JSON-RPC error response still proves the server is reachable. Checks do
 not refresh account credentials, launch turns or modify permissions.
 
 EOF, broken writes, diagnostic failures and request timeouts publish a persistent
@@ -18,7 +23,8 @@ a 15-second I/O deadline that closes SSH to interrupt blocked writes.
 Transient failures retry after 1, 2, 4, 8, 16 and then 30 seconds. Only one connection
 attempt is current. A superseded attempt cannot install a stale connection. Retries
 and health checks pause while backgrounded or offline; returning or regaining a
-network triggers recovery immediately. The app does not create a foreground service
+network triggers recovery immediately when a connection has already failed. The
+app does not create a foreground service
 or promise an uninterrupted background socket.
 
 Reconnection uses stored credentials and the pinned host key, initializes a fresh
@@ -26,6 +32,14 @@ RPC client, refreshes host state, and resumes the selected thread. Its history a
 reported active-turn ID are restored. Manual reconnect to the same host also keeps
 the selected conversation. No failed message, command, turn or approval response is
 resent. Old pending approvals are cleared; the server must send any new requests.
+
+A connection check keeps the composer visible and editable; sending waits for the
+check to finish. Draft text, cursor position, attachments, mentions and goal mode
+stay in memory while the workspace reconnects to the same open task. Draft state
+sits above the temporary connection panels, and restoring that task keeps its
+conversation revision. Choosing another task or New task still clears the draft.
+A task chosen during reconnection also takes precedence over the previous selection.
+
 A daemon remains on the host when its SSH connection closes. Per-connection mode
 starts a new app server and resumes persisted history; it cannot preserve the old
 server process or guarantee that its interrupted work continues.
