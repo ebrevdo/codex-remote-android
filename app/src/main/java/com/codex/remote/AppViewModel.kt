@@ -10,6 +10,7 @@ import com.codex.remote.data.ssh.UnknownHostKeyException
 import com.codex.remote.data.store.ConnectionStore
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.AppUiState
+import com.codex.remote.domain.RemoteFileDownload
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.toDraft
 import com.codex.remote.domain.ConnectionDraft
@@ -1341,6 +1342,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val content = client.readRemoteFile(path)
         check(rpc === client) { "Connection changed. Reopen the file to try again." }
         return content
+    }
+
+    fun prepareRemoteFileDownload(path: String): RemoteFileDownload {
+        val client = rpc ?: error("Reconnect to download files.")
+        return RemoteFileDownload { output, onProgress ->
+            check(rpc === client) { "Connection changed. Reopen the file to try again." }
+            client.downloadRemoteFile(path, output, onProgress)
+            check(rpc === client) { "Connection changed. Reopen the file to try again." }
+        }
     }
 
     fun loadRemoteDirectory(path: String) {

@@ -1,7 +1,6 @@
 package com.codex.remote.ui.screens
 
 import android.content.Context
-import android.text.method.LinkMovementMethod
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
@@ -162,6 +161,7 @@ import com.codex.remote.data.security.reviewApproval
 import com.codex.remote.data.security.validatedBrowserUrl
 import com.codex.remote.data.security.visibleControls
 import com.codex.remote.domain.AppUiState
+import com.codex.remote.domain.RemoteFileDownload
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.ConnectionStatus
@@ -192,6 +192,7 @@ import io.noties.markwon.Markwon
 import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
+import io.noties.markwon.ext.tables.TableAwareMovementMethod
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import kotlinx.coroutines.launch
@@ -240,6 +241,7 @@ fun WorkspaceScreen(
     onSetPermissionProfile: (String?) -> Unit,
     onSetPermissionMode: (PermissionMode) -> Unit,
     readRemoteFile: suspend (String) -> String,
+    prepareRemoteFileDownload: (String) -> RemoteFileDownload,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
@@ -319,6 +321,7 @@ fun WorkspaceScreen(
                     onSetPermissionProfile = onSetPermissionProfile,
                     onSetPermissionMode = onSetPermissionMode,
                     readRemoteFile = readRemoteFile,
+                    prepareRemoteFileDownload = prepareRemoteFileDownload,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -396,6 +399,7 @@ fun WorkspaceScreen(
                     onSetPermissionProfile = onSetPermissionProfile,
                     onSetPermissionMode = onSetPermissionMode,
                     readRemoteFile = readRemoteFile,
+                    prepareRemoteFileDownload = prepareRemoteFileDownload,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -819,6 +823,7 @@ private fun WorkspaceContent(
     onSetPermissionProfile: (String?) -> Unit,
     onSetPermissionMode: (PermissionMode) -> Unit,
     readRemoteFile: suspend (String) -> String,
+    prepareRemoteFileDownload: (String) -> RemoteFileDownload,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
@@ -849,6 +854,7 @@ private fun WorkspaceContent(
             RemoteFilePreviewDialog(
                 file = file,
                 readFile = readRemoteFile,
+                prepareDownload = prepareRemoteFileDownload,
                 onOpenLink = { previewLink = PreviewLink(it, file.directory) },
                 onDismiss = { previewLink = null },
             )
@@ -1868,7 +1874,7 @@ internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLin
         factory = { viewContext ->
             TextView(viewContext).apply {
                 setTextIsSelectable(true)
-                movementMethod = LinkMovementMethod.getInstance()
+                movementMethod = TableAwareMovementMethod.create()
                 includeFontPadding = false
                 setLineSpacing(0f, 1.12f)
             }

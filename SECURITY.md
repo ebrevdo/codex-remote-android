@@ -94,6 +94,26 @@ commit; a future schema extension requires an explicit client update.
   File reads have a 15-second deadline after opening the SSH session channel and
   a 5-second SFTP request timeout. Dismissal cancels the read. Paths are passed to
   SFTP as data, never interpolated into shell commands. No file is read until tapped.
+- Explicit file downloads: regular files of any size, copied as raw bytes over a
+  separate authenticated SFTP channel. Android 10+ uses an app-owned MediaStore
+  Downloads entry marked pending until its write completes. Earlier versions use
+  private app storage shared by a FileProvider restricted to the downloads folder.
+  Opening a completed file uses ACTION_VIEW with the file's MIME type and a
+  temporary read grant for its content URI. No broad storage permission is used.
+  A 32 KiB copy buffer and fixed read-ahead keep memory usage independent of file
+  size; counters and remote offsets are 64-bit. No size or total-transfer-time cap
+  applies. A 15-second per-request SFTP timeout still detects stalled reads.
+  The source connection and path are captured when the download starts. Closing
+  the preview or canceling stops the transfer and deletes incomplete output.
+- Image previews: image files, including SVG, are streamed to a private temporary
+  cache file and rendered as an image resource in a local WebView. JavaScript,
+  network loads, file/content access and network-backed Safe Browsing checks are
+  disabled. A request interceptor serves only the exact local image URL and blocks
+  other requests; CSP also restricts the HTML wrapper and the image resource.
+  Remote SVG markup is never inserted into the HTML page. Navigation is blocked,
+  the WebView is destroyed on dismissal, and temporary preview files are deleted.
+  WebView initialization failures and renderer exits show an unavailable preview
+  instead of terminating the app; an exited renderer is detached and destroyed.
 - Markdown/LaTeX rendering has no message-length cutoff.
 
 These limits can reject unusually large legitimate histories or outputs. They

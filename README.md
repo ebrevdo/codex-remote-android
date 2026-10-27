@@ -87,8 +87,26 @@ land on the last line. For Markdown, switch between **Source** and **Preview**
 without fetching the file again. Preview renders the complete document; column
 positions and line-range endings are not used.
 
-The SSH server must provide SFTP. Previews are read-only and limited to regular
-UTF-8 text files of at most 256 KiB. No new login or dependency is required.
+Image links open an image preview with pinch zoom, including SVG, PNG, JPEG, GIF,
+WebP, BMP, ICO and AVIF. Images are fetched over SFTP and displayed locally;
+previews do not execute scripts or load resources from other servers. If the
+phone cannot start WebView or its renderer exits, the preview offers downloading
+the file while keeping the app open.
+
+The SSH server must provide SFTP. Text previews are read-only and limited to
+regular UTF-8 files up to 256 KiB. Use **Download** to save any regular file,
+including binary files and files too large to preview. Download starts immediately
+and streams the original bytes with no file-size limit. On Android 10 or newer,
+files are saved to the phone's Downloads folder; older phones use app-owned
+storage. The completion dropdown offers **Open**, which launches the phone's
+registered file handler, and **Download again**. Android chooses an app if no
+default has been set. If no app supports the file type, the preview explains that.
+Line references affect only the preview: downloads save the entire file.
+
+Progress and cancellation are available during the transfer. Closing the preview
+cancels an unfinished transfer and removes its incomplete output. Completed
+downloads remain available after closing the preview. Temporary image preview
+files are removed when the preview closes.
 
 ## Install
 

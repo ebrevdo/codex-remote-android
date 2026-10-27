@@ -70,6 +70,7 @@ fun CodexRemoteApp(viewModel: AppViewModel) {
             onSetPermissionProfile = viewModel::setPermissionProfile,
             onSetPermissionMode = viewModel::setPermissionMode,
             readRemoteFile = viewModel::readRemoteFile,
+            prepareRemoteFileDownload = viewModel::prepareRemoteFileDownload,
             onLoadRemoteDirectory = viewModel::loadRemoteDirectory,
             onClearRemoteDirectory = viewModel::clearRemoteDirectory,
             onStartLogin = viewModel::startRemoteLogin,

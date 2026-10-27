@@ -16,6 +16,7 @@ import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.security.MessageDigest
 import java.security.PublicKey
 import java.util.Base64
@@ -42,6 +43,9 @@ class ActiveSshTransport internal constructor(
     override val errorReader: BufferedReader = BufferedReader(InputStreamReader(command.errorStream, Charsets.UTF_8))
 
     override suspend fun readRemoteFile(path: String): String = readRemoteTextFile(ssh, path)
+
+    override suspend fun downloadRemoteFile(path: String, output: OutputStream, onProgress: (Long) -> Unit) =
+        downloadRemoteFile(ssh, path, output, onProgress)
 
     override fun readMessage(): String? = messages.readMessage()
     override fun writeMessage(message: String) = withIoDeadline(15_000, ::close) {

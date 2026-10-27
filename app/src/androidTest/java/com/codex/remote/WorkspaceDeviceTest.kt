@@ -665,6 +665,7 @@ val answer = 42
                     onSetPermissionProfile = {},
                     onSetPermissionMode = { callbacks.permissionMode = it },
                     readRemoteFile = readRemoteFile,
+                    prepareRemoteFileDownload = { error("Unexpected download") },
                     onLoadRemoteDirectory = {},
                     onClearRemoteDirectory = {},
                     onStartLogin = {},

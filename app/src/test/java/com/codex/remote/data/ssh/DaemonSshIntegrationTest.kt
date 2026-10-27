@@ -3,17 +3,25 @@ package com.codex.remote.data.ssh
 import com.codex.remote.data.rpc.CodexRpcClient
 import com.codex.remote.domain.AppServerMode
 import com.codex.remote.domain.RemotePlatform
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.IOException
+import java.io.OutputStream
+import java.util.concurrent.CountDownLatch
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.schmizz.sshj.SSHClient
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
-import java.io.File
 
 /** Opt-in test: tools/test_daemon_transport.py supplies a private loopback OpenSSH fixture. */
 class DaemonSshIntegrationTest {
@@ -56,6 +64,45 @@ class DaemonSshIntegrationTest {
                             val failure = runCatching { client.readRemoteFile("${value("previewDirectory")}/$name") }.exceptionOrNull()
                             assertTrue("Reject $name", failure is java.io.IOException)
                         }
+                        for (name in listOf("large.txt", "binary.bin", "empty.bin")) {
+                            val path = "${value("previewDirectory")}/$name"
+                            val output = ByteArrayOutputStream()
+                            var bytes = -1L
+                            client.downloadRemoteFile(path, output) { bytes = it }
+                            assertArrayEquals(File(path).readBytes(), output.toByteArray())
+                            assertEquals(File(path).length(), bytes)
+                        }
+                        // Download the full source, including text before a preview's line offset.
+                        val textOutput = ByteArrayOutputStream()
+                        client.downloadRemoteFile(value("previewFile"), textOutput) {}
+                        assertArrayEquals(File(value("previewFile")).readBytes(), textOutput.toByteArray())
+                        for (name in listOf("pipe", "missing.txt", ".")) {
+                            val failure = runCatching {
+                                client.downloadRemoteFile("${value("previewDirectory")}/$name", ByteArrayOutputStream()) {}
+                            }.exceptionOrNull()
+                            assertTrue("Reject download of $name", failure is IOException)
+                        }
+                        val fullDisk = object : OutputStream() {
+                            override fun write(b: Int) { throw IOException("Storage full") }
+                            override fun write(b: ByteArray, off: Int, len: Int) { throw IOException("Storage full") }
+                        }
+                        assertTrue(runCatching {
+                            client.downloadRemoteFile(value("previewFile"), fullDisk) {}
+                        }.exceptionOrNull() is IOException)
+                        // Interrupt a blocked transfer without closing the shared SSH/RPC connection.
+                        val writing = CompletableDeferred<Unit>()
+                        val canceled = launch {
+                            val blockedOutput = object : OutputStream() {
+                                override fun write(b: Int) = error("Expected buffered writes")
+                                override fun write(b: ByteArray, off: Int, len: Int) {
+                                    writing.complete(Unit)
+                                    CountDownLatch(1).await()
+                                }
+                            }
+                            client.downloadRemoteFile(value("previewFile"), blockedOutput) {}
+                        }
+                        writing.await()
+                        canceled.cancelAndJoin()
                         client.checkHealth()
                         assertTrue("Only the isolated empty history may be visible", client.listThreads().isEmpty())
                         println("Real Codex initialize + thread/list succeeded using $mode")

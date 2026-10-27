@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Codex Remote</string>
+    <string name="image_preview_unavailable">Image preview is unavailable. Download and open this file.</string>
 </resources>

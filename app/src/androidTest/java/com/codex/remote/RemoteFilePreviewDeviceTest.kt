@@ -1,17 +1,29 @@
 package com.codex.remote
 
+import android.app.Activity
+import android.app.Instrumentation
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.codex.remote.data.security.parseRemoteFileLink
+import com.codex.remote.domain.RemoteFileDownload
 import com.codex.remote.ui.screens.RemoteFilePreviewDialog
 import com.codex.remote.ui.theme.CodexRemoteTheme
+import java.io.IOException
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,6 +32,82 @@ import org.junit.runner.RunWith
 class RemoteFilePreviewDeviceTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    fun binaryPreviewFailureStillDownloadsImmediatelyAndOffersOpen() {
+        assertAutomaticDownload("/repo/archive.zip", "This file is not UTF-8 text.")
+    }
+
+    @Test
+    fun oversizedPreviewFailureStillDownloadsImmediately() {
+        assertAutomaticDownload("/repo/large.txt", "File is too large to preview (256 KiB limit).")
+    }
+
+    @Test
+    fun readableTextDownloadsTheWholeFileWithoutTheLineSuffix() {
+        assertAutomaticDownload("/repo/report.md:20", null)
+    }
+
+    private fun assertAutomaticDownload(target: String, previewError: String?) {
+        val paths = mutableListOf<String>()
+        val bytes = ByteArray(300_001) { it.toByte() }
+        val file = checkNotNull(parseRemoteFileLink(target, "/repo"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var opened: Intent? = null
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                if (intent.action != Intent.ACTION_VIEW) return null
+                opened = intent
+                return Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        try {
+            show(target, prepareDownload = { path ->
+                paths += path
+                RemoteFileDownload { output, onProgress ->
+                    output.write(bytes)
+                    onProgress(bytes.size.toLong())
+                }
+            }) {
+                if (previewError != null) throw IOException(previewError)
+                "# Readable text"
+            }
+            if (previewError != null) composeRule.onNodeWithText(previewError).assertIsDisplayed()
+            composeRule.onNodeWithTag("remote-file-download").assertIsEnabled().performClick()
+            composeRule.waitUntil(30_000) {
+                composeRule.onAllNodesWithText("Download saved.").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithTag("remote-file-open").assertIsDisplayed().performClick()
+            val intent = composeRule.runOnIdle { checkNotNull(opened) }
+            assertEquals(listOf(file.path), paths)
+            assertEquals(Intent.ACTION_VIEW, intent.action)
+            assertEquals("content", intent.data?.scheme)
+            assertEquals(checkNotNull(intent.data), intent.clipData?.getItemAt(0)?.uri)
+            assertTrue(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            assertFalse(intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION != 0)
+            composeRule.activity.contentResolver.openInputStream(checkNotNull(intent.data))!!.use {
+                assertArrayEquals(bytes, it.readBytes())
+            }
+        } finally {
+            instrumentation.removeMonitor(monitor)
+            opened?.data?.let { composeRule.activity.contentResolver.delete(it, null, null) }
+        }
+    }
+
+    @Test
+    fun svgClickLoadsAnImageInsteadOfReadingItAsText() {
+        val svg = """<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>"""
+        var requestedPath: String? = null
+        show("/repo/plot.svg", prepareDownload = { path ->
+            requestedPath = path
+            RemoteFileDownload { output, _ -> output.write(svg.toByteArray()) }
+        }) { error("Image previews must not request text decoding") }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithTag("remote-file-image").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithTag("remote-file-image").assertIsDisplayed()
+        composeRule.runOnIdle { assertEquals("/repo/plot.svg", requestedPath) }
+        composeRule.onNodeWithTag("remote-file-download").assertIsEnabled()
+    }
 
     @Test
     fun lineReferencesJumpToSourceAndSwitchToMarkdownWithoutAnotherRead() {
@@ -59,11 +147,15 @@ class RemoteFilePreviewDeviceTest {
         composeRule.onNodeWithText("Preview").assertDoesNotExist()
     }
 
-    private fun show(target: String, readFile: suspend (String) -> String) {
+    private fun show(
+        target: String,
+        prepareDownload: (String) -> RemoteFileDownload = { error("Unexpected download") },
+        readFile: suspend (String) -> String,
+    ) {
         val file = checkNotNull(parseRemoteFileLink(target, "/repo"))
         composeRule.setContent {
             CodexRemoteTheme(darkTheme = false) {
-                RemoteFilePreviewDialog(file, readFile, onOpenLink = {}, onDismiss = {})
+                RemoteFilePreviewDialog(file, readFile, prepareDownload, onOpenLink = {}, onDismiss = {})
             }
         }
     }

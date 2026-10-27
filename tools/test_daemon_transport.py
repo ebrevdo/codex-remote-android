@@ -94,7 +94,8 @@ ForceCommand {shlex.quote(shutil.which('python3'))} {shlex.quote(str(forced))}
 """)
         text_file = work / "report $(false); 'draft'.md"
         text_file.write_text("# SFTP preview\n\n**Works** without executing a shell.\n")
-        (work / "large.txt").write_bytes(b"x" * (256 * 1024 + 1))
+        (work / "large.txt").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+        (work / "empty.bin").touch()
         (work / "binary.bin").write_bytes(b"binary\0data")
         os.mkfifo(work / "pipe")
         fixture = work / "fixture.json"
@@ -122,7 +123,7 @@ ForceCommand {shlex.quote(shutil.which('python3'))} {shlex.quote(str(forced))}
             result = ET.parse(report).getroot().attrib
             if result.get("tests") != "1" or any(result.get(key) != "0" for key in ("skipped", "failures", "errors")):
                 raise RuntimeError("Integration test did not run successfully: " + repr(result))
-            print("PASS: real OpenSSH file previews and error isolation, Codex daemon reuse, and stdio compatibility")
+            print("PASS: real OpenSSH file previews/downloads, cancellation and error isolation, Codex daemon reuse, and stdio compatibility")
         except Exception:
             print((work / "sshd.log").read_text())
             raise
