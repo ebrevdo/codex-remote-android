@@ -30,8 +30,15 @@ or promise an uninterrupted background socket.
 Reconnection uses stored credentials and the pinned host key, initializes a fresh
 RPC client, refreshes host state, and resumes the selected thread. Its history and
 reported active-turn ID are restored. Manual reconnect to the same host also keeps
-the selected conversation. No failed message, command, turn or approval response is
-resent. Old pending approvals are cleared; the server must send any new requests.
+the selected conversation. Messages with failed or uncertain delivery, commands, and approval responses
+are not resent. Old pending approvals are cleared; the server must send any new requests.
+
+Review-start replies are guarded by the turn-event version, selection, and connection.
+A completion or a newer turn takes precedence over a delayed reply. When a message is
+explicitly rejected because its exact thread/conversation ID is not loaded, the app
+resumes that same ID and retries once. The restored turn determines whether the input
+starts a turn or steers an active one. A failed resume, a repeated rejection, another
+RPC error, or an I/O failure stops this recovery. No replacement conversation is created.
 
 A connection check keeps the composer visible and editable; sending waits for the
 check to finish. Draft text, cursor position, attachments, mentions and goal mode

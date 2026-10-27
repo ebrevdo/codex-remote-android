@@ -656,6 +656,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
+            var steering = steeringThreadId != null
             val localItemId = "local-${UUID.randomUUID()}"
             val userItem = TimelineItem(
                 id = localItemId,
@@ -679,16 +680,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             runCatching {
-                if (steeringThreadId != null && steeringTurnId != null) {
-                    client.steerTurn(
-                        threadId = steeringThreadId,
-                        expectedTurnId = steeringTurnId,
-                        text = prompt,
-                        mentions = mentions,
-                        attachments = attachments,
-                    )
-                    return@runCatching
-                }
                 val threadId = currentState.selectedThreadId ?: client.startThread(
                     cwd = cwd,
                     model = selectedModel,
@@ -726,22 +717,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     return@runCatching
                 }
-                client.startTurn(
-                    threadId = threadId,
-                    text = prompt,
-                    cwd = cwd,
-                    model = selectedModel,
-                    reasoningEffort = selectedReasoningEffort,
-                    serviceTier = selectedServiceTier,
-                    approvalPolicy = approvalPolicy,
-                    approvalsReviewer = approvalsReviewer,
-                    permissionProfile = permissionProfile,
-                    collaborationMode = collaborationMode,
-                    mentions = mentions,
-                    attachments = attachments,
-                )
+                client.withLoadedThread(threadId, cwd) { restored ->
+                    if (!request.isCurrent()) return@withLoadedThread
+                    val turnId = if (restored == null) steeringTurnId else restored.activeTurnId
+                    if (restored != null) {
+                        steering = restored.isTurnRunning == true
+                        request.update { it.copy(activeTurnId = if (steering) turnId else null) }
+                    }
+                    if (restored?.isTurnRunning == true && turnId == null) {
+                        error("The task is running but its turn ID is unavailable. Reconnect before sending a message.")
+                    }
+                    if (turnId != null && restored?.isTurnRunning != false) {
+                        client.steerTurn(threadId, turnId, prompt, mentions, attachments)
+                    } else {
+                        client.startTurn(
+                            threadId = threadId,
+                            text = prompt,
+                            cwd = cwd,
+                            model = selectedModel,
+                            reasoningEffort = selectedReasoningEffort,
+                            serviceTier = selectedServiceTier,
+                            approvalPolicy = approvalPolicy,
+                            approvalsReviewer = approvalsReviewer,
+                            permissionProfile = permissionProfile,
+                            collaborationMode = collaborationMode,
+                            mentions = mentions,
+                            attachments = attachments,
+                        )
+                    }
+                }
             }.onSuccess {
-                if (steeringThreadId != null) {
+                if (steering) {
                     request.update { it.copy(notice = "Message added to the running task") }
                 }
             }.onFailure { error ->
@@ -749,8 +755,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 request.update {
                     it.copy(
                         timeline = it.timeline.filterNot { item -> item.id == localItemId },
-                        isTurnRunning = if (asGoal) it.isTurnRunning else steeringThreadId != null,
-                        activeTurnId = if (asGoal || steeringThreadId != null) it.activeTurnId else null,
+                        isTurnRunning = if (asGoal) it.isTurnRunning else steering,
+                        activeTurnId = if (asGoal || steering) it.activeTurnId else null,
                         isGoalLoading = if (asGoal) false else it.isGoalLoading,
                         goalError = if (asGoal) friendlyGoalError(error) else it.goalError,
                     )
@@ -967,21 +973,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            request.update { it.copy(isTurnRunning = true, notice = null) }
-            runCatching { client.startReview(threadId, targetKind, targetValue) }
-                .onSuccess { review ->
-                    request.update {
-                        it.copy(
-                            isTurnRunning = true,
-                            activeTurnId = review.turnId,
-                        )
-                    }
-                }
-                .onFailure { error ->
-                    if (!request.isCurrent()) return@onFailure
-                    request.update { it.copy(isTurnRunning = false, activeTurnId = null) }
-                    showError(error)
-                }
+            if (!request.isCurrent()) return@launch
+            requestReview(
+                state = _state,
+                isCurrentConnection = { rpc === client },
+                turnStateVersion = { turnStateVersion },
+                startReview = { client.startReview(threadId, targetKind, targetValue) },
+                errorMessage = ::friendlyError,
+            )
         }
     }
 

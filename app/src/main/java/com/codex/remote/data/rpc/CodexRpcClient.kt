@@ -455,6 +455,19 @@ class CodexRpcClient(
         resumeThreadLegacy(threadId, cwd)
     }
 
+    /** Retry only an explicit rejection for an unloaded thread, never an uncertain delivery. */
+    internal suspend fun <T> withLoadedThread(
+        threadId: String,
+        cwd: String,
+        action: suspend (RemoteThreadSession?) -> T,
+    ): T = try {
+        action(null)
+    } catch (error: RpcException) {
+        if (!error.isThreadNotLoaded(threadId)) throw error
+        val session = resumeThread(threadId, cwd)
+        action(session)
+    }
+
     private suspend fun resumeThreadPaginated(threadId: String, cwd: String): RemoteThreadSession {
         val result = request("thread/resume", threadResumeParams(threadId, cwd, paginated = true))
         val thread = result.obj("thread")
@@ -1553,6 +1566,16 @@ private const val MODEL_PAGE_SIZE = 100
 private const val MCP_STATUS_PAGE_SIZE = 100
 private const val PERMISSION_PROFILE_PAGE_SIZE = 100
 internal const val THREAD_HISTORY_PAGE_SIZE = 5
+
+private fun RpcException.isThreadNotLoaded(threadId: String): Boolean {
+    val id = Regex.escape(threadId)
+    val message = message.orEmpty().trim()
+    return listOf(
+        "(?:thread|conversation)(?: id)? not found: ?['\"]?$id['\"]?",
+        "(?:thread|conversation)(?: with)?(?: id)? ['\"]?$id['\"]? (?:was )?not found",
+        "no (?:thread|conversation) found with id:? ?['\"]?$id['\"]?",
+    ).any { Regex(it, RegexOption.IGNORE_CASE).matches(message) }
+}
 
 private fun RpcException.isHistoryPaginationUnavailable(): Boolean {
     if (code == -32601 || code == -32602) return true
