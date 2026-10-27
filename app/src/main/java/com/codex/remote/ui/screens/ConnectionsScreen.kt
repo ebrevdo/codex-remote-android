@@ -464,6 +464,25 @@ private fun ConnectionEditor(
                     }
                 }
                 SectionLabel("APP SERVER")
+                OutlinedTextField(
+                    enabled = !busy,
+                    value = draft.codexCommandPrefix,
+                    onValueChange = { onDraftChange(draft.copy(codexCommandPrefix = it)) },
+                    label = { Text("Codex command prefix") },
+                    placeholder = { Text("codex") },
+                    minLines = 1,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    isError = attemptedSave && ConnectionDraftIssue.CODEX_COMMAND_PREFIX in validationIssues,
+                    supportingText = {
+                        Text(if (attemptedSave && ConnectionDraftIssue.CODEX_COMMAND_PREFIX in validationIssues) {
+                            ConnectionDraftIssue.CODEX_COMMAND_PREFIX.message
+                        } else {
+                            "Command with optional environment settings and Codex flags. Uses the remote shell's syntax."
+                        })
+                    },
+                )
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         enabled = !busy,
@@ -533,6 +552,7 @@ private val ConnectionDraftIssue.message: String
         ConnectionDraftIssue.USERNAME -> "Username is required."
         ConnectionDraftIssue.PASSWORD -> "Password is required."
         ConnectionDraftIssue.PRIVATE_KEY -> "Paste an OpenSSH or PEM private key."
+        ConnectionDraftIssue.CODEX_COMMAND_PREFIX -> "Enter a valid Codex command prefix."
     }
 
 @Composable

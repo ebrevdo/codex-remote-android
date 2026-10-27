@@ -13,6 +13,10 @@ enum class RemotePlatform { AUTO, POSIX, WINDOWS }
 @Serializable
 enum class AppServerMode { SESSION, DAEMON }
 
+internal const val DEFAULT_CODEX_COMMAND_PREFIX = "codex"
+
+internal fun String.isValidCodexCommandPrefix(): Boolean = isNotBlank() && '\u0000' !in this
+
 @Serializable
 data class SavedConnection(
     val id: String = UUID.randomUUID().toString(),
@@ -28,6 +32,7 @@ data class SavedConnection(
     val platform: RemotePlatform = RemotePlatform.AUTO,
     val appServerMode: AppServerMode = AppServerMode.SESSION,
     val lastUsedAt: Long = 0,
+    val codexCommandPrefix: String = DEFAULT_CODEX_COMMAND_PREFIX,
 )
 
 data class ConnectionDraft(
@@ -44,6 +49,7 @@ data class ConnectionDraft(
     val clearHostKeyFingerprint: Boolean = false,
     val platform: RemotePlatform = RemotePlatform.AUTO,
     val appServerMode: AppServerMode = AppServerMode.SESSION,
+    val codexCommandPrefix: String = DEFAULT_CODEX_COMMAND_PREFIX,
 )
 
 internal fun SavedConnection?.toDraft(): ConnectionDraft = if (this == null) ConnectionDraft() else ConnectionDraft(
@@ -56,6 +62,7 @@ internal fun SavedConnection?.toDraft(): ConnectionDraft = if (this == null) Con
     hostKeyFingerprint = hostKeyFingerprint,
     platform = platform,
     appServerMode = appServerMode,
+    codexCommandPrefix = codexCommandPrefix,
 )
 
 internal enum class ConnectionDraftIssue {
@@ -65,6 +72,7 @@ internal enum class ConnectionDraftIssue {
     USERNAME,
     PASSWORD,
     PRIVATE_KEY,
+    CODEX_COMMAND_PREFIX,
 }
 
 internal fun ConnectionDraft.validationIssues(existing: SavedConnection? = null): List<ConnectionDraftIssue> = buildList {
@@ -78,6 +86,7 @@ internal fun ConnectionDraft.validationIssues(existing: SavedConnection? = null)
     if (authType == AuthType.PRIVATE_KEY && privateKey.isBlank() && existing?.encryptedPrivateKey.isNullOrBlank()) {
         add(ConnectionDraftIssue.PRIVATE_KEY)
     }
+    if (!codexCommandPrefix.isValidCodexCommandPrefix()) add(ConnectionDraftIssue.CODEX_COMMAND_PREFIX)
 }
 
 data class ConnectionSecrets(

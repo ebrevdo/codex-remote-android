@@ -17,7 +17,7 @@ The current Desktop parity matrix and known gaps are tracked in
 ## Remote host requirements
 
 - OpenSSH access with a password or PEM/OpenSSH private key.
-- `codex` installed and available from the remote login shell (`codex --version`).
+- Codex installed and available through the configured remote command prefix (default: `codex`).
 - A Codex account on the remote host. Existing API-key/ChatGPT auth is reused;
   when required, the app can start Codex's remote ChatGPT device-code login.
 - A trusted, least-privilege remote user.
@@ -42,6 +42,19 @@ Task pins are stored on the remote Codex thread rather than only on Android.
 The host editor scrolls through the save actions and adjusts for the keyboard and
 system bars. Unsaved fields survive screen rotation in memory. Saving or cancelling
 clears that draft; Android process termination still discards unsaved credentials.
+
+Under **App server**, set **Codex command prefix** to the command you want the
+remote shell to run. It defaults to `codex`, including for existing saved hosts.
+Environment settings and global Codex arguments are supported, for example:
+
+```sh
+CODEX_HOME=/srv/codex-work /opt/bin/codex-dev -c 'model="gpt-5"'
+```
+
+The app appends `--version`, `app-server --listen stdio://`,
+`app-server daemon start`, or `app-server proxy --sock ...` to this prefix.
+Use POSIX shell syntax for Linux/macOS and PowerShell syntax for Windows.
+Save and reconnect to apply a changed prefix.
 
 ## Background daemon connections
 

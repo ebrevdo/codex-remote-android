@@ -676,9 +676,11 @@ class RemoteStateDeviceTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val store = ConnectionStore(context)
         val suffix = UUID.randomUUID().toString()
+        val commandPrefix = "CODEX_HOME='/srv/custom home' codex-dev -c model=custom"
         val first = store.save(
             com.codex.remote.domain.ConnectionDraft(
                 name = "device-first-$suffix",
+                codexCommandPrefix = commandPrefix,
                 host = "127.0.0.1",
                 port = "22",
                 username = "tester",
@@ -703,6 +705,8 @@ class RemoteStateDeviceTest {
                 }
             }
             assertEquals(first.id, persisted.lastUsedConnectionOrNull()?.id)
+            assertEquals(commandPrefix, persisted.first { it.id == first.id }.codexCommandPrefix)
+            assertEquals("codex", persisted.first { it.id == second.id }.codexCommandPrefix)
         } finally {
             store.delete(first.id)
             store.delete(second.id)

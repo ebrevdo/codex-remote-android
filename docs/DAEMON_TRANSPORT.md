@@ -11,6 +11,12 @@ The installed CLI 0.154.0 requires a managed standalone installation for daemon
 startup. Newer versions may prepare their managed package on the first start.
 The app reports startup errors without silently switching transport modes.
 
+The host's **Codex command prefix** (default `codex`) is used for the version
+probe, daemon startup, and proxy connection. It can include environment settings,
+a different executable, and global Codex arguments; it is evaluated as shell code
+in the selected remote platform. App-provided arguments and the returned socket
+path are quoted separately.
+
 ## Connection sequence
 
 1. Verify the pinned SSH host key, authenticate, detect the platform and probe Codex.

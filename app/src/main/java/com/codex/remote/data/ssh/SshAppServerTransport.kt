@@ -4,6 +4,7 @@ import android.content.Context
 import com.codex.remote.domain.AppServerMode
 import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.ConnectionSecrets
+import com.codex.remote.domain.DEFAULT_CODEX_COMMAND_PREFIX
 import com.codex.remote.domain.RemotePlatform
 import com.codex.remote.domain.SavedConnection
 import kotlinx.coroutines.Dispatchers
@@ -86,8 +87,11 @@ class SshAppServerTransportFactory(private val context: Context) {
         val ssh = authenticatedClient(connection, secrets) { observedFingerprint = it }
         return try {
             val remotePlatform = resolvePlatform(ssh, connection.platform)
-            val codexVersion = readCodexVersion(ssh, remotePlatform)
-            openAppServerTransport(ssh, observedFingerprint, remotePlatform, codexVersion, connection.appServerMode)
+            val codexVersion = readCodexVersion(ssh, remotePlatform, connection.codexCommandPrefix)
+            openAppServerTransport(
+                ssh, observedFingerprint, remotePlatform, codexVersion, connection.appServerMode,
+                connection.codexCommandPrefix,
+            )
         } catch (error: Throwable) {
             runCatching { ssh.disconnect() }
             runCatching { ssh.close() }
@@ -170,39 +174,23 @@ class SshAppServerTransportFactory(private val context: Context) {
         }
     }
 
-    private fun readCodexVersion(ssh: SSHClient, platform: RemotePlatform): String {
-        val probe = runSshCommand(ssh, codexVersionCommand(platform))
+    private fun readCodexVersion(ssh: SSHClient, platform: RemotePlatform, commandPrefix: String): String {
+        val probe = runSshCommand(ssh, codexVersionCommand(platform, commandPrefix))
         val version = probe.stdout.lineSequence()
             .map(String::trim)
             .firstOrNull { it.startsWith("codex-cli ") || it.startsWith("codex ") }
         if (probe.exitStatus != 0 || version == null) {
             val detail = probe.stderr.lineSequence().lastOrNull { it.isNotBlank() }
                 ?: probe.stdout.lineSequence().lastOrNull { it.isNotBlank() }
-                ?: "codex --version returned no version"
+                ?: "The configured Codex command returned no version"
             throw RemoteCodexUnavailableException(
-                "The remote login shell could not find a working Codex CLI. Install Codex on the remote host and check it with codex --version. $detail",
+                "The remote login shell could not run the configured Codex command. Check the Codex command prefix and verify it with --version on the remote host. $detail",
             )
         }
         return version.substringAfter(' ').trim()
     }
 
 }
-
-internal fun codexVersionCommand(platform: RemotePlatform): String = when (platform) {
-    RemotePlatform.AUTO -> error("AUTO platform must be resolved before building a Codex command")
-    RemotePlatform.POSIX -> "exec \"\${SHELL:-/bin/sh}\" -lc 'codex --version'"
-    RemotePlatform.WINDOWS ->
-        "powershell.exe -NoLogo -NonInteractive -Command \"& { codex --version }\""
-}
-
-internal fun appServerCommand(platform: RemotePlatform): String = when (platform) {
-    RemotePlatform.AUTO -> error("AUTO platform must be resolved before building a Codex command")
-    RemotePlatform.POSIX ->
-        "exec \"\${SHELL:-/bin/sh}\" -lc 'exec codex app-server --listen stdio://'"
-    RemotePlatform.WINDOWS ->
-        "powershell.exe -NoLogo -NonInteractive -Command \"& { codex app-server --listen stdio:// }\""
-}
-
 
 /** Also used by the JVM integration test with a real, authenticated SSH connection. */
 internal fun openAppServerTransport(
@@ -211,9 +199,10 @@ internal fun openAppServerTransport(
     platform: RemotePlatform,
     cliVersion: String,
     mode: AppServerMode,
+    commandPrefix: String = DEFAULT_CODEX_COMMAND_PREFIX,
 ): ActiveSshTransport {
     val endpoint = if (mode == AppServerMode.DAEMON) {
-        val result = runSshCommand(ssh, daemonStartCommand(platform), timeoutSeconds = 60)
+        val result = runSshCommand(ssh, daemonStartCommand(platform, commandPrefix), timeoutSeconds = 60)
         if (result.exitStatus != 0) {
             throw RemoteCodexUnavailableException(
                 "Unable to start the Codex daemon. This mode requires daemon and proxy support. " +
@@ -225,7 +214,7 @@ internal fun openAppServerTransport(
     ssh.timeout = 0
     val session = ssh.startSession()
     try {
-        val command = session.exec(endpoint?.let { daemonProxyCommand(platform, it.socketPath) } ?: appServerCommand(platform))
+        val command = session.exec(endpoint?.let { daemonProxyCommand(platform, it.socketPath, commandPrefix) } ?: appServerCommand(platform, commandPrefix))
         val messages = if (endpoint == null) {
             JsonLineMessageStream(command.inputStream, command.outputStream)
         } else {

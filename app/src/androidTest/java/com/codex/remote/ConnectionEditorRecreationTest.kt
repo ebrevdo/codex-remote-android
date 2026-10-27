@@ -33,6 +33,7 @@ class ConnectionEditorRecreationTest {
             password = "test-password", privateKey = "test-only-key\nsecond line",
             passphrase = "test-passphrase", clearHostKeyFingerprint = true,
             platform = RemotePlatform.POSIX, appServerMode = AppServerMode.DAEMON,
+            codexCommandPrefix = "CODEX_HOME=/srv/codex codex-dev -c model=custom",
         )
         lateinit var viewModel: AppViewModel
         composeRule.activityRule.scenario.onActivity { activity ->
@@ -52,6 +53,8 @@ class ConnectionEditorRecreationTest {
         composeRule.activityRule.scenario.recreate()
         composeRule.onNode(hasSetTextAction() and hasText("Display name"))
             .performScrollTo().assertTextContains("Unsaved host")
+        composeRule.onNode(hasSetTextAction() and hasText("Codex command prefix"))
+            .performScrollTo().assertTextContains(initial.codexCommandPrefix)
         composeRule.activityRule.scenario.onActivity { activity ->
             assertEquals(expected, ViewModelProvider(activity)[AppViewModel::class.java].state.value.connectionDraft)
         }

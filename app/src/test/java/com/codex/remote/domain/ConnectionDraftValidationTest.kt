@@ -27,6 +27,17 @@ class ConnectionDraftValidationTest {
     }
 
     @Test
+    fun acceptsShellPrefixesAndRejectsMissingOrNulCommands() {
+        assertEquals("codex", ConnectionDraft().codexCommandPrefix)
+        for (prefix in listOf("", " \n\t", "codex\u0000")) {
+            assertEquals(listOf(ConnectionDraftIssue.CODEX_COMMAND_PREFIX), validDraft.copy(codexCommandPrefix = prefix).validationIssues())
+        }
+        for (prefix in listOf("codex-dev", "CODEX_HOME='/srv/my home' codex -c model=custom", "export CODEX_HOME=/srv/codex\ncodex")) {
+            assertTrue(validDraft.copy(codexCommandPrefix = prefix).validationIssues().isEmpty())
+        }
+    }
+
+    @Test
     fun rejectsPortsOutsideSshRange() {
         assertEquals(listOf(ConnectionDraftIssue.PORT), validDraft.copy(port = "0").validationIssues())
         assertEquals(listOf(ConnectionDraftIssue.PORT), validDraft.copy(port = "65536").validationIssues())

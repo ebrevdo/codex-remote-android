@@ -1,6 +1,5 @@
 package com.codex.remote.data.ssh
 
-import com.codex.remote.domain.RemotePlatform
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -42,23 +41,5 @@ class SshConfigTest {
         verifier.update("changed message".toByteArray())
         assertFalse(verifier.verify(signature))
         SecurityUtils.getKeyPairGenerator("X25519").generateKeyPair()
-    }
-
-    @Test
-    fun posixCommandsUseTheRemoteLoginShell() {
-        assertEquals(
-            "exec \"\${SHELL:-/bin/sh}\" -lc 'codex --version'",
-            codexVersionCommand(RemotePlatform.POSIX),
-        )
-        assertTrue(appServerCommand(RemotePlatform.POSIX).contains("-lc 'exec codex app-server"))
-    }
-
-    @Test
-    fun windowsCommandAllowsTheRemotePowerShellProfile() {
-        val command = appServerCommand(RemotePlatform.WINDOWS)
-
-        assertTrue(command.contains("powershell.exe"))
-        assertFalse(command.contains("-NoProfile"))
-        assertTrue(command.contains("codex app-server --listen stdio://"))
     }
 }

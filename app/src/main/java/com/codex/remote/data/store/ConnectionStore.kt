@@ -9,6 +9,7 @@ import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.ConnectionDraft
 import com.codex.remote.domain.ConnectionSecrets
 import com.codex.remote.domain.SavedConnection
+import com.codex.remote.domain.isValidCodexCommandPrefix
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -44,6 +45,7 @@ class ConnectionStore(
         require(draft.name.isNotBlank()) { "Enter a connection name" }
         require(draft.host.isNotBlank()) { "Enter an SSH host" }
         require(draft.username.isNotBlank()) { "Enter a username" }
+        require(draft.codexCommandPrefix.isValidCodexCommandPrefix()) { "Enter a valid Codex command prefix" }
 
         val saved = SavedConnection(
             id = draft.id ?: original?.id ?: UUID.randomUUID().toString(),
@@ -59,6 +61,7 @@ class ConnectionStore(
                 else draft.hostKeyFingerprint.ifBlank { original?.hostKeyFingerprint.orEmpty() },
             platform = draft.platform,
             appServerMode = draft.appServerMode,
+            codexCommandPrefix = draft.codexCommandPrefix.trim(),
             lastUsedAt = original?.lastUsedAt ?: 0,
         )
         if (saved.authType == AuthType.PASSWORD && saved.encryptedPassword.isBlank()) {

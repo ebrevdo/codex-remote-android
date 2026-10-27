@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -56,10 +58,13 @@ class ConnectionEditorDeviceTest {
         // Focus the password field so the available viewport also has to account for the IME.
         composeRule.onNode(hasSetTextAction() and hasText("Password"))
             .performScrollTo().performClick().performTextInput("test-only-password")
+        val prefix = "CODEX_HOME=/srv/codex codex-dev -c model=custom"
+        composeRule.onNode(hasSetTextAction() and hasText("Codex command prefix"))
+            .performScrollTo().assertTextContains("codex").performTextReplacement(prefix)
         composeRule.onNodeWithText("Save").performScrollTo().assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Save & connect").performScrollTo().assertIsDisplayed().performClick()
         composeRule.runOnIdle {
-            val expected = draft.copy(password = "test-only-password")
+            val expected = draft.copy(password = "test-only-password", codexCommandPrefix = prefix)
             assertEquals(listOf(expected to false, expected to true), saved)
         }
     }

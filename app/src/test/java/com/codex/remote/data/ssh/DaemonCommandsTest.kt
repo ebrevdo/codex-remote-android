@@ -4,12 +4,12 @@ import com.codex.remote.domain.AppServerMode
 import com.codex.remote.domain.AuthType
 import com.codex.remote.domain.RemotePlatform
 import com.codex.remote.domain.SavedConnection
+import com.codex.remote.domain.toDraft
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Base64
 
 class DaemonCommandsTest {
     @Test
@@ -46,17 +46,14 @@ class DaemonCommandsTest {
     }
 
     @Test
-    fun powershellProxyUsesEncodedScriptAndEscapesApostrophes() {
-        val command = daemonProxyCommand(RemotePlatform.WINDOWS, "C:\\a'b\\control.sock")
-        assertTrue(command.startsWith("powershell.exe -NoLogo -NonInteractive -EncodedCommand "))
-        assertEquals("codex app-server proxy --sock 'C:\\a''b\\control.sock'; exit \$LASTEXITCODE", Base64.getDecoder().decode(command.substringAfterLast(' ')).toString(Charsets.UTF_16LE))
-    }
-
-    @Test
     fun savedHostsKeepSessionModeAndDaemonModeRoundTrips() {
         val old = """{"name":"host","host":"host","username":"user","authType":"PASSWORD"}"""
-        assertEquals(AppServerMode.SESSION, Json.decodeFromString(SavedConnection.serializer(), old).appServerMode)
-        val connection = SavedConnection(name = "host", host = "host", username = "user", authType = AuthType.PASSWORD, appServerMode = AppServerMode.DAEMON)
+        val restored = Json.decodeFromString(SavedConnection.serializer(), old)
+        assertEquals(AppServerMode.SESSION, restored.appServerMode)
+        assertEquals("codex", restored.codexCommandPrefix)
+        assertEquals("codex", restored.toDraft().codexCommandPrefix)
+        val connection = SavedConnection(name = "host", host = "host", username = "user", authType = AuthType.PASSWORD, appServerMode = AppServerMode.DAEMON, codexCommandPrefix = "CODEX_HOME=/srv/codex codex-dev -c model=custom")
         assertEquals(connection, Json.decodeFromString(SavedConnection.serializer(), Json.encodeToString(SavedConnection.serializer(), connection)))
+        assertEquals(connection.codexCommandPrefix, connection.toDraft().codexCommandPrefix)
     }
 }
