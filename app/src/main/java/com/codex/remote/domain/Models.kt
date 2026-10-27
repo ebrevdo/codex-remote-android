@@ -418,6 +418,8 @@ data class AppUiState(
     val isCheckingConnection: Boolean = false,
     val connectionMessage: String = "",
     val threads: List<RemoteThread> = emptyList(),
+    val isThreadCatalogLoading: Boolean = false,
+    val threadCatalogError: String? = null,
     val archivedThreads: List<RemoteThread> = emptyList(),
     val isArchivedThreadsLoading: Boolean = false,
     val archivedThreadsError: String? = null,

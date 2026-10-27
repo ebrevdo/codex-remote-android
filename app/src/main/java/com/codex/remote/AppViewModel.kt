@@ -48,6 +48,7 @@ import net.schmizz.sshj.userauth.UserAuthException
 import org.java_websocket.exceptions.InvalidDataException
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.filterNotNull
@@ -71,6 +72,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var eventJob: Job? = null
     private var failureJob: Job? = null
     private var connectJob: Job? = null
+    private var threadCatalog: ThreadCatalogRefresh? = null
+    private var composerCatalogJob: Job? = null
     private var connectionGeneration = 0L
     private var turnStateVersion = 0L
     private val recovery = ConnectionRecovery(
@@ -194,6 +197,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     activeConnection = connection,
                     connectionStatus = ConnectionStatus.CONNECTING,
                     connectionMessage = "Connecting to ${connection.host}…",
+                    isThreadCatalogLoading = true,
+                    threadCatalogError = null,
                     isReconnecting = automatic || previous.remoteServer != null,
                     isCheckingConnection = false,
                     showConnections = if (automatic) it.showConnections else false,
@@ -220,6 +225,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     olderHistoryError = null,
                     consumedHistoryCursors = emptySet(),
                     threads = emptyList(),
+                    isThreadCatalogLoading = true,
+                    threadCatalogError = null,
                     archivedThreads = emptyList(),
                     isArchivedThreadsLoading = false,
                     archivedThreadsError = null,
@@ -274,19 +281,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 rpc = client
                 observeEvents(client)
                 val server = withTimeout(20_000) { client.initialize() }
-                val account = withTimeout(20_000) { client.readAccount() }
-                val models = withTimeout(30_000) { client.listModels() }
-                val threads = withTimeout(60_000) { client.listThreads() }
-                val collaborationModes = runCatching {
-                    withTimeout(20_000) { client.listCollaborationModes() }
-                }.getOrDefault(emptyList())
-                val permissionProfiles = runCatching {
-                    withTimeout(20_000) { client.listPermissionProfiles(null) }
-                }.getOrDefault(emptyList())
+                startThreadCatalog(client, server.codexVersion)
+                val accountRequest = async { runCatching { withTimeout(20_000) { client.readAccount() } } }
+                val modelRequest = async { runCatching { withTimeout(30_000) { client.listModels() } } }
+                val collaborationRequest = async {
+                    runCatching { withTimeout(20_000) { client.listCollaborationModes() } }.getOrDefault(emptyList())
+                }
+                val permissionRequest = async {
+                    runCatching { withTimeout(20_000) { client.listPermissionProfiles(null) } }.getOrDefault(emptyList())
+                }
+                val account = accountRequest.await().getOrThrow()
+                val models = modelRequest.await().getOrThrow()
+                val collaborationModes = collaborationRequest.await()
+                val permissionProfiles = permissionRequest.await()
                 currentCoroutineContext().ensureActive()
                 client.failure.value?.let { throw it }
                 store.recordUsed(connection.id)
-                val projects = groupThreadsByProject(threads)
+                val threads = _state.value.threads
                 val model = models.firstOrNull { sameHost && it.id == previous.selectedModel }
                     ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
                 _state.updateWithNotices {
@@ -300,9 +311,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         permissionProfiles = permissionProfiles,
                         remoteServer = server,
                         remoteAccount = account,
-                        threads = threads,
-                        projects = projects,
-                        selectedProjectPath = it.selectedProjectPath.takeIf { sameHost } ?: projects.firstOrNull()?.path,
                     )
                 }
                 // Resume subscribes and fetches history. Never replay a turn, command or approval response.
@@ -315,7 +323,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _state.updateWithNotices {
                     it.copy(
                         connectionStatus = ConnectionStatus.CONNECTED,
-                        connectionMessage = connectionSummary(projects.size, threads.size, server.codexVersion),
+                        connectionMessage = connectionSummary(it.projects.size, it.threads.size, server.codexVersion),
                         statusError = null,
                         isStatusLoading = false,
                         isReconnecting = false,
@@ -331,6 +339,44 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (rpc !== client) client?.close()
             }
         }
+    }
+
+    private fun startThreadCatalog(client: CodexRpcClient, codexVersion: String) {
+        threadCatalog = ThreadCatalogRefresh(
+            scope = viewModelScope,
+            initialThreads = _state.value.threads,
+            loadPage = { cursor -> client.listThreadPage(cursor) },
+            onThreads = { updatedThreads ->
+                if (rpc === client) {
+                    val previousPath = _state.value.selectedProjectPath
+                    _state.updateWithNotices { state ->
+                        val updated = state.withThreadCatalog(updatedThreads)
+                        updated.copy(
+                            connectionMessage = if (state.connectionStatus == ConnectionStatus.CONNECTED) {
+                                connectionSummary(updated.projects.size, updated.threads.size, codexVersion)
+                            } else state.connectionMessage,
+                        )
+                    }
+                    if (_state.value.connectionStatus == ConnectionStatus.CONNECTED &&
+                        _state.value.selectedProjectPath != previousPath
+                    ) refreshComposerCatalog()
+                }
+            },
+            onError = { error ->
+                if (rpc === client) _state.updateWithNotices {
+                    it.copy(threadCatalogError = friendlyError(error))
+                }
+            },
+            onLoading = { loading ->
+                if (rpc === client) _state.updateWithNotices {
+                    it.copy(
+                        isThreadCatalogLoading = loading,
+                        threadCatalogError = if (loading) null else it.threadCatalogError,
+                    )
+                }
+            },
+        )
+        refreshThreads()
     }
 
     fun setAppForeground(foreground: Boolean) {
@@ -378,6 +424,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isStatusLoading = false,
                 statusError = friendlyError(error),
                 isOlderHistoryLoading = false,
+                isThreadCatalogLoading = false,
                 notice = friendlyError(error),
             )
         }
@@ -387,6 +434,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun closeClient() {
         val client = rpc
         rpc = null
+        threadCatalog?.close()
+        threadCatalog = null
+        composerCatalogJob?.cancel()
+        composerCatalogJob = null
         eventJob?.cancel()
         eventJob = null
         failureJob?.cancel()
@@ -426,6 +477,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 activeConnection = if (clearActive) null else it.activeConnection,
                 connectionStatus = ConnectionStatus.DISCONNECTED,
                 connectionMessage = "",
+                isThreadCatalogLoading = false,
+                threadCatalogError = null,
                 isReconnecting = false,
                 isCheckingConnection = false,
                 threads = if (clearActive) emptyList() else it.threads,
@@ -477,6 +530,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun newThread() {
+        val previousPath = _state.value.selectedProjectPath
         _state.updateWithNotices { state ->
             val projectPath = state.selectedProjectPath ?: state.projects.firstOrNull()?.path
             if (state.remoteAccount?.canRunCodex != true) {
@@ -487,10 +541,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 state.withNewTask(projectPath)
             }
         }
+        if (_state.value.selectedProjectPath != previousPath) refreshComposerCatalog()
     }
 
     fun selectProject(project: RemoteProject) {
         _state.updateWithNotices { it.withNewTask(project.path) }
+        refreshComposerCatalog()
     }
 
     fun selectThread(thread: RemoteThread) {
@@ -500,6 +556,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun resumeSelectedThread(client: CodexRpcClient, thread: RemoteThread, restoring: Boolean = false) {
+        val previousPath = _state.value.selectedProjectPath
         val projectPath = _state.value.projects
             .firstOrNull { project -> project.threads.any { it.id == thread.id } }
             ?.path
@@ -509,6 +566,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isTurnRunning = thread.status.isRemoteThreadActive(),
             )
         }
+        if (_state.value.selectedProjectPath != previousPath) refreshComposerCatalog()
         val request = ConversationRequest(_state) { rpc === client }
         val turnVersion = turnStateVersion
         val session = runCatching { client.resumeThread(thread.id, thread.cwd) }
@@ -778,7 +836,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         viewModelScope.launch {
             runCatching { client.renameThread(thread.id, trimmedName) }
-                .onSuccess { _state.updateWithNotices { it.withThreadRenamed(thread.id, trimmedName) } }
+                .onSuccess {
+                    if (rpc !== client) return@onSuccess
+                    _state.updateWithNotices { it.withThreadRenamed(thread.id, trimmedName) }
+                    _state.value.threads.firstOrNull { it.id == thread.id }?.let { threadCatalog?.upsert(it) }
+                }
                 .onFailure(::showError)
         }
     }
@@ -792,6 +854,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.archiveThread(thread.id) }
                 .onSuccess {
+                    if (rpc !== client) return@onSuccess
+                    val previousPath = _state.value.selectedProjectPath
+                    threadCatalog?.refresh(thread.id, removed = true)
                     _state.updateWithNotices { state ->
                         state.withThreadArchived(thread.id).copy(
                             archivedThreads = (listOf(thread) + state.archivedThreads)
@@ -799,6 +864,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 .sortedByDescending { it.updatedAt },
                         )
                     }
+                    if (_state.value.selectedProjectPath != previousPath) refreshComposerCatalog()
                 }
                 .onFailure(::showError)
         }
@@ -834,6 +900,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.unarchiveThread(thread.id) }
                 .onSuccess { restored ->
+                    if (rpc !== client) return@onSuccess
+                    threadCatalog?.upsert(restored)
                     _state.updateWithNotices { state ->
                         val threads = (listOf(restored) + state.threads).distinctBy { it.id }
                         state.copy(
@@ -853,6 +921,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.deleteThread(thread.id) }
                 .onSuccess {
+                    if (rpc !== client) return@onSuccess
+                    threadCatalog?.refresh(thread.id, removed = true)
                     _state.updateWithNotices { state ->
                         state.copy(
                             archivedThreads = state.archivedThreads.filterNot { it.id == thread.id },
@@ -869,6 +939,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.setThreadPinned(thread.id, isPinned) }
                 .onSuccess { updated ->
+                    if (rpc !== client) return@onSuccess
+                    threadCatalog?.upsert(updated)
                     _state.updateWithNotices { state ->
                         val threads = state.threads.map { current ->
                             if (current.id == updated.id) updated else current
@@ -925,6 +997,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.onSuccess { forked ->
                 if (!request.isCurrent()) return@onSuccess
+                threadCatalog?.upsert(forked.thread)
                 request.update { state ->
                     val threads = (listOf(forked.thread) + state.threads).distinctBy { it.id }
                     val model = state.models.firstOrNull { it.id == forked.session.model }
@@ -952,6 +1025,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         notice = "Continued in a new remote task",
                     )
                 }
+                if (_state.value.selectedProjectPath != snapshot.selectedProjectPath) refreshComposerCatalog()
             }.onFailure { if (request.isCurrent()) showError(it) }
         }
     }
@@ -1447,7 +1521,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     AppServerEvent.AccountChanged -> refreshRemoteAccount()
-                    AppServerEvent.ThreadsChanged -> refreshThreads()
+                    is AppServerEvent.ThreadsChanged -> threadCatalog?.refresh(event.threadId, event.removed, event.restored)
                     AppServerEvent.SkillsChanged -> refreshComposerCatalog(forceReload = true)
                     is AppServerEvent.GoalUpdated -> _state.updateWithNotices { state ->
                         if (state.selectedThreadId == event.threadId) {
@@ -1653,25 +1727,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun refreshThreadCatalog() {
+        refreshThreads()
+    }
+
     private fun refreshThreads() {
-        val client = rpc ?: return
-        if (_state.value.activeConnection == null) return
-        viewModelScope.launch {
-            runCatching { client.listThreads() }
-                .onSuccess { threads ->
-                    if (rpc !== client) return@onSuccess
-                    val projects = groupThreadsByProject(threads)
-                    _state.updateWithNotices { state ->
-                        state.withThreadCatalog(threads).copy(
-                            connectionMessage = connectionSummary(
-                                projects.size,
-                                threads.size,
-                                state.remoteServer?.codexVersion.orEmpty(),
-                            ),
-                        )
-                    }
-                }
-        }
+        threadCatalog?.refresh()
     }
 
     private suspend fun loadComposerCatalog(
@@ -1699,11 +1760,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshComposerCatalog(forceReload: Boolean = false) {
         val client = rpc ?: return
-        val cwds = _state.value.projects.map { it.path }.filter(String::isNotBlank)
-        _state.updateWithNotices { it.copy(isComposerCatalogLoading = true, composerCatalogError = null) }
-        viewModelScope.launch {
-            val catalog = loadComposerCatalog(client, cwds, forceReload)
-            if (rpc !== client) return@launch
+        val cwd = _state.value.selectedProjectPath?.takeIf(String::isNotBlank)
+        composerCatalogJob?.cancel()
+        _state.updateWithNotices {
+            it.copy(skills = emptyList(), plugins = emptyList(), isComposerCatalogLoading = cwd != null, composerCatalogError = null)
+        }
+        if (cwd == null) return
+        composerCatalogJob = viewModelScope.launch {
+            val catalog = loadComposerCatalog(client, listOf(cwd), forceReload)
+            currentCoroutineContext().ensureActive()
+            if (rpc !== client || _state.value.selectedProjectPath != cwd) return@launch
             _state.updateWithNotices {
                 it.copy(
                     skills = catalog.skills,

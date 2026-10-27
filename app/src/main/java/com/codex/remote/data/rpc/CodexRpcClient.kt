@@ -91,7 +91,9 @@ sealed interface AppServerEvent {
     ) : AppServerEvent
     data class Approval(val threadId: String?, val request: ApprovalRequest) : AppServerEvent
     data object AccountChanged : AppServerEvent
-    data object ThreadsChanged : AppServerEvent
+    data class ThreadsChanged(
+        val threadId: String?, val removed: Boolean = false, val restored: Boolean = false,
+    ) : AppServerEvent
     data object SkillsChanged : AppServerEvent
     data class GoalUpdated(val threadId: String, val goal: ThreadGoal) : AppServerEvent
     data class GoalCleared(val threadId: String) : AppServerEvent
@@ -131,6 +133,8 @@ class CodexRpcClient(
     val failure = _failure.asStateFlow()
     private val approvals = ConcurrentHashMap<String, ApprovalRequest>()
     private val approvalChanges = linkedMapOf<Triple<String?, String?, String>, String>()
+    private var useThreadStateDb = true
+    private val threadCollectionsNeedingScan = mutableSetOf<Boolean>()
 
     suspend fun initialize(): RemoteServerInfo {
         scope.launch { readLoop() }
@@ -154,8 +158,24 @@ class CodexRpcClient(
     suspend fun listArchivedThreads(): List<RemoteThread> = listThreads(archived = true)
 
     private suspend fun listThreads(archived: Boolean): List<RemoteThread> = collectAllThreadPages { cursor ->
-        val result = request("thread/list", threadListParams(cursor, archived))
-        ThreadPage(
+        listThreadPage(cursor, archived)
+    }
+
+    internal suspend fun listThreadPage(cursor: String?, archived: Boolean = false): ThreadPage {
+        val databaseOnly = useThreadStateDb && archived !in threadCollectionsNeedingScan
+        val result = try {
+            request("thread/list", threadListParams(cursor, archived, databaseOnly))
+        } catch (error: RpcException) {
+            if (!databaseOnly || !error.isStateDbListingUnavailable()) throw error
+            useThreadStateDb = false
+            return listThreadPage(cursor, archived)
+        }
+        // Follow the upstream client's DB-first lookup: an empty index may need repair.
+        if (databaseOnly && cursor == null && result.array("data").isEmpty() && result.string("nextCursor").isNullOrBlank()) {
+            threadCollectionsNeedingScan.add(archived)
+            return listThreadPage(cursor, archived)
+        }
+        return ThreadPage(
             threads = result.array("data").mapNotNull(::parseThread),
             nextCursor = result.string("nextCursor"),
         )
@@ -803,8 +823,13 @@ class CodexRpcClient(
             }
             "account/updated" -> _events.emit(AppServerEvent.AccountChanged)
             "thread/started", "thread/status/changed", "thread/archived", "thread/deleted", "thread/closed",
-            "thread/name/updated", "thread/unarchived" ->
-                _events.emit(AppServerEvent.ThreadsChanged)
+            "thread/name/updated", "thread/unarchived" -> _events.emit(
+                AppServerEvent.ThreadsChanged(
+                    threadId = params.string("threadId") ?: params.obj("thread")?.string("id"),
+                    removed = method == "thread/archived" || method == "thread/deleted",
+                    restored = method == "thread/unarchived",
+                ),
+            )
             "skills/changed" -> _events.emit(AppServerEvent.SkillsChanged)
             "thread/goal/updated" -> {
                 val goal = params["goal"]?.let(::parseThreadGoal) ?: return
@@ -994,8 +1019,13 @@ class CodexRpcClient(
             return cursor
         }
 
-        internal fun threadListParams(cursor: String?, archived: Boolean = false): JsonObject = buildJsonObject {
-            put("limit", THREAD_PAGE_SIZE)
+        internal fun threadListParams(
+            cursor: String?,
+            archived: Boolean = false,
+            useStateDbOnly: Boolean = true,
+        ): JsonObject = buildJsonObject {
+            put("limit", if (cursor == null) THREAD_INITIAL_PAGE_SIZE else THREAD_PAGE_SIZE)
+            if (useStateDbOnly) put("useStateDbOnly", true)
             put("sortKey", "updated_at")
             put("sortDirection", "desc")
             put("archived", archived)
@@ -1525,6 +1555,7 @@ internal data class ModelPage(
 )
 
 internal suspend fun collectAllThreadPages(
+    onPage: (List<RemoteThread>) -> Unit = {},
     loadPage: suspend (cursor: String?) -> ThreadPage,
 ): List<RemoteThread> {
     val threadsById = linkedMapOf<String, RemoteThread>()
@@ -1532,6 +1563,7 @@ internal suspend fun collectAllThreadPages(
     var cursor: String? = null
     do {
         val page = loadPage(cursor)
+        onPage(page.threads)
         page.threads.forEach { thread ->
             val current = threadsById[thread.id]
             if (current == null || thread.updatedAt >= current.updatedAt) threadsById[thread.id] = thread
@@ -1562,10 +1594,17 @@ internal suspend fun collectAllModelPages(
 }
 
 private const val THREAD_PAGE_SIZE = 100
+private const val THREAD_INITIAL_PAGE_SIZE = 20
 private const val MODEL_PAGE_SIZE = 100
 private const val MCP_STATUS_PAGE_SIZE = 100
 private const val PERMISSION_PROFILE_PAGE_SIZE = 100
 internal const val THREAD_HISTORY_PAGE_SIZE = 5
+
+private fun RpcException.isStateDbListingUnavailable(): Boolean =
+    code == -32602 || message.orEmpty().let {
+        it.contains("useStateDbOnly", ignoreCase = true) ||
+            Regex("state[ _-]?db (?:is )?(?:unavailable|disabled|not available)", RegexOption.IGNORE_CASE).containsMatchIn(it)
+    }
 
 private fun RpcException.isThreadNotLoaded(threadId: String): Boolean {
     val id = Regex.escape(threadId)

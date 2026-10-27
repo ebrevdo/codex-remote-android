@@ -247,6 +247,7 @@ fun WorkspaceScreen(
     onApproval: (ApprovalRequest, String, Map<String, List<String>>) -> Unit,
     onTrustHostKey: () -> Unit,
     onRejectHostKey: () -> Unit,
+    onRefreshThreadCatalog: () -> Unit = {},
 ) {
     val composerDraft = remember(state.activeConnection?.id, state.selectedThreadId, state.conversationRevision) { ComposerDraft() }
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
@@ -288,6 +289,7 @@ fun WorkspaceScreen(
                         onLoadArchivedThreads()
                     },
                     onOpenConnections = onOpenConnections,
+                    onRefreshThreadCatalog = onRefreshThreadCatalog,
                 )
                 HorizontalDivider(Modifier.fillMaxHeight().width(1.dp))
                 WorkspaceContent(
@@ -364,6 +366,7 @@ fun WorkspaceScreen(
                                 scope.launch { drawerState.close() }
                                 onOpenConnections()
                             },
+                            onRefreshThreadCatalog = onRefreshThreadCatalog,
                         )
                     }
                 },
@@ -487,6 +490,7 @@ private fun WorkspaceSidebar(
     onSetThreadPinned: (RemoteThread, Boolean) -> Unit,
     onOpenArchivedTasks: () -> Unit,
     onOpenConnections: () -> Unit,
+    onRefreshThreadCatalog: () -> Unit,
 ) {
     val expandedProjects = remember(state.activeConnection?.id) { mutableStateMapOf<String, Boolean>() }
     var searchQuery by remember(state.activeConnection?.id) { mutableStateOf("") }
@@ -538,7 +542,27 @@ private fun WorkspaceSidebar(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         LazyColumn(modifier = Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-            if (displayedProjects.isEmpty()) {
+            if (state.isThreadCatalogLoading) {
+                item(key = "loading-projects") {
+                    Row(
+                        Modifier.padding(horizontal = 10.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("Loading saved tasks…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            state.threadCatalogError?.let { error ->
+                item(key = "projects-error") {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 14.dp)) {
+                        Text("Could not load saved tasks: $error", style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = onRefreshThreadCatalog) { Text("Retry") }
+                    }
+                }
+            }
+            if (displayedProjects.isEmpty() && !state.isThreadCatalogLoading && state.threadCatalogError == null) {
                 item(key = "empty-projects") {
                     Text(
                         if (searchQuery.isBlank()) "No Codex conversations found" else "No matching tasks",
@@ -1262,12 +1286,13 @@ private fun Conversation(
 
     if (state.timeline.isEmpty()) {
         val project = state.projects.firstOrNull { it.path == state.selectedProjectPath }
+        val loadingCatalog = project == null && state.isThreadCatalogLoading
         Box(modifier, contentAlignment = Alignment.Center) {
             Column(
                 modifier = Modifier.widthIn(max = 560.dp).padding(28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                if (state.isBusy) {
+                if (state.isBusy || loadingCatalog) {
                     CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
                 } else {
                     Icon(
@@ -1279,12 +1304,18 @@ private fun Conversation(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    if (state.isBusy) "Loading recent messages" else project?.name ?: "No remote Codex history",
+                    when {
+                        state.isBusy -> "Loading recent messages"
+                        project != null -> project.name
+                        loadingCatalog -> "Loading saved tasks…"
+                        state.threadCatalogError != null -> "Could not load saved tasks"
+                        else -> "No remote Codex history"
+                    },
                     style = MaterialTheme.typography.headlineSmall,
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    project?.path ?: state.connectionMessage,
+                    project?.path ?: state.threadCatalogError ?: state.connectionMessage,
                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

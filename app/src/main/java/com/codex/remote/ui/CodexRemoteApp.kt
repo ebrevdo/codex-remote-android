@@ -78,6 +78,7 @@ fun CodexRemoteApp(viewModel: AppViewModel) {
             onApproval = viewModel::respondToApproval,
             onTrustHostKey = viewModel::trustPendingHostKey,
             onRejectHostKey = viewModel::rejectPendingHostKey,
+            onRefreshThreadCatalog = viewModel::refreshThreadCatalog,
         )
     }
 }

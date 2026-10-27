@@ -75,6 +75,15 @@ recovers. The selected conversation is reattached and refreshed without replayin
 messages, commands or approval responses. Host-key, credential and security-limit
 failures require manual attention. See [connection recovery](docs/CONNECTION_RECOVERY.md).
 
+Saved sessions start loading after initialization, with recent tasks appearing first
+and a loading indicator until import finishes. Reconnecting restores the open
+conversation without waiting for the session catalog; routine list updates
+fetch only the recent page. The initial page requests 20 tasks, using database-only
+listing on supporting servers to avoid scanning session logs. Code-review completion
+cannot reactivate a finished turn.
+If the server explicitly reports the selected conversation missing from memory, sending
+resumes that same conversation and retries once. Uncertain deliveries are never replayed.
+
 Approval-review notices, warnings, and other status messages appear in the
 conversation's scrolling history. They stay visible as you scroll and survive a
 reconnect to the same open task. Host settings show persistent inline messages

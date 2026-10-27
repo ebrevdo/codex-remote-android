@@ -30,8 +30,28 @@ or promise an uninterrupted background socket.
 Reconnection uses stored credentials and the pinned host key, initializes a fresh
 RPC client, refreshes host state, and resumes the selected thread. Its history and
 reported active-turn ID are restored. Manual reconnect to the same host also keeps
-the selected conversation. Messages with failed or uncertain delivery, commands, and approval responses
-are not resent. Old pending approvals are cleared; the server must send any new requests.
+the selected conversation. Messages whose delivery failed or became uncertain, commands,
+and approval responses are not resent. Old pending approvals are cleared; the server
+must send any new requests.
+
+The saved-session catalog starts loading as soon as RPC initialization finishes,
+alongside account and model metadata. Restoring the open conversation does not wait
+for the catalog. Each page becomes visible as it arrives, with recent tasks first.
+The first request asks for 20 tasks in descending update-time order; subsequent pages
+request 100. Listing uses `useStateDbOnly` to avoid scan-and-repair reads of session
+logs on supporting servers. An empty index or an explicit unsupported/unavailable
+response falls back to normal listing. Empty archived history does not disable the
+fast path for active history. Older servers may ignore the option and retain their
+usual listing cost.
+
+The workspace and sidebar show loading until import finishes; only a successful,
+empty result shows no history. Catalog errors have a Retry button in the sidebar.
+Notifications share one refresh job; after import they refresh only the recent page
+and merge it with cached older tasks. Archive/delete notifications remove those tasks
+without requiring another full scan. Unchanged results do not rebuild the project
+list. Disconnect cancels the previous catalog job.
+Skills and plugins load only for the selected project, and changing projects cancels
+the previous catalog request so its result cannot replace the new project's choices.
 
 Review-start replies are guarded by the turn-event version, selection, and connection.
 A completion or a newer turn takes precedence over a delayed reply. When a message is
