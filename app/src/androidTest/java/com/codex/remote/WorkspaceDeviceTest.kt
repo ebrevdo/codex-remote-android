@@ -13,12 +13,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -53,6 +57,7 @@ import com.codex.remote.domain.ThreadGoal
 import com.codex.remote.domain.ThreadGoalStatus
 import com.codex.remote.domain.TimelineItem
 import com.codex.remote.domain.TimelineKind
+import com.codex.remote.domain.withNewTask
 import com.codex.remote.ui.screens.WorkspaceScreen
 import com.codex.remote.ui.theme.CodexRemoteTheme
 import kotlinx.coroutines.flow.first
@@ -62,6 +67,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -98,6 +104,38 @@ class WorkspaceDeviceTest {
         composeRule.runOnIdle {
             assertEquals(initial, state.value)
             assertFalse(composeRule.activity.isFinishing)
+        }
+    }
+
+    @Test
+    fun newTaskDuringRestorationClearsTheOldTurnAndAllowsSending() {
+        val state = mutableStateOf(baseState(isTurnRunning = true).copy(activeTurnId = null, isBusy = true))
+        val callbacks = WorkspaceCallbacks().apply {
+            onNewThread = { state.value = state.value.withNewTask(state.value.selectedProjectPath) }
+        }
+        show(state, callbacks)
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Old draft")
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsNotEnabled()
+
+        fun chooseNewTask() {
+            if (composeRule.activity.resources.configuration.screenWidthDp < 840) {
+                composeRule.runOnIdle { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
+            }
+            composeRule.onAllNodesWithText("New task").onFirst().performClick()
+        }
+        chooseNewTask()
+        composeRule.onNodeWithContentDescription("Stop").assertDoesNotExist()
+        assertEquals("", composerText())
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Abandoned draft")
+        // A second new task has the same null thread ID, but still needs a fresh composer.
+        chooseNewTask()
+        assertEquals("", composerText())
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Start the new task")
+        composeRule.onNodeWithTag(COMPOSER_SEND).assertIsEnabled().performClick()
+        composeRule.runOnIdle {
+            assertEquals(listOf("Start the new task" to false), callbacks.sentMessages)
+            assertFalse(state.value.isTurnRunning)
+            assertNull(state.value.activeTurnId)
         }
     }
 
@@ -595,7 +633,7 @@ val answer = 42
                 WorkspaceScreen(
                     state = state.value,
                     onOpenConnections = {},
-                    onNewThread = {},
+                    onNewThread = callbacks.onNewThread,
                     onSelectProject = {},
                     onSelectThread = {},
                     onLoadOlderHistory = callbacks.onLoadOlder,
@@ -719,6 +757,7 @@ private class WorkspaceCallbacks {
     var permissionMode: PermissionMode? = null
     val sentMessages = mutableListOf<Pair<String, Boolean>>()
     var olderLoads: Int = 0
+    var onNewThread: () -> Unit = {}
     var onLoadOlder: () -> Unit = {}
     var onSetGoal: (String) -> Unit = {}
     var onSend: (String, List<ComposerMention>, List<ComposerImageAttachment>, Boolean) -> Unit =

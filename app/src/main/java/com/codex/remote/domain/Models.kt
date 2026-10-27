@@ -431,6 +431,8 @@ data class AppUiState(
     val composerCatalogError: String? = null,
     val selectedProjectPath: String? = null,
     val selectedThreadId: String? = null,
+    // Identifies each local selection, including successive new tasks in the same project.
+    val conversationRevision: Long = 0,
     val threadGoal: ThreadGoal? = null,
     val isGoalLoading: Boolean = false,
     val goalError: String? = null,
@@ -489,26 +491,12 @@ internal fun AppUiState.withThreadRenamed(threadId: String, name: String): AppUi
 internal fun AppUiState.withThreadArchived(threadId: String): AppUiState {
     val remaining = threads.filterNot { it.id == threadId }
     val remainingProjects = groupThreadsByProject(remaining)
-    val archivedSelectedThread = selectedThreadId == threadId
+    val updated = copy(threads = remaining, projects = remainingProjects)
+    if (selectedThreadId != threadId) return updated
     val nextProjectPath = selectedProjectPath
         ?.takeIf { path -> remainingProjects.any { it.path == path } }
         ?: remainingProjects.firstOrNull()?.path
-    return copy(
-        threads = remaining,
-        projects = remainingProjects,
-        selectedProjectPath = nextProjectPath,
-        selectedThreadId = selectedThreadId.takeUnless { archivedSelectedThread },
-        threadGoal = if (archivedSelectedThread) null else threadGoal,
-        isGoalLoading = if (archivedSelectedThread) false else isGoalLoading,
-        goalError = if (archivedSelectedThread) null else goalError,
-        threadTokenUsage = if (archivedSelectedThread) null else threadTokenUsage,
-        timeline = if (archivedSelectedThread) emptyList() else timeline,
-        olderHistoryCursor = if (archivedSelectedThread) null else olderHistoryCursor,
-        hasOlderHistory = if (archivedSelectedThread) false else hasOlderHistory,
-        isOlderHistoryLoading = if (archivedSelectedThread) false else isOlderHistoryLoading,
-        olderHistoryError = if (archivedSelectedThread) null else olderHistoryError,
-        consumedHistoryCursors = if (archivedSelectedThread) emptySet() else consumedHistoryCursors,
-    )
+    return updated.withNewTask(nextProjectPath)
 }
 
 internal fun mergeTimelineHistory(

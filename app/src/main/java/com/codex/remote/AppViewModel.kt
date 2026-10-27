@@ -34,6 +34,9 @@ import com.codex.remote.domain.composerToken
 import com.codex.remote.domain.containsComposerToken
 import com.codex.remote.domain.withThreadArchived
 import com.codex.remote.domain.withThreadRenamed
+import com.codex.remote.domain.withNewTask
+import com.codex.remote.domain.withThreadCatalog
+import com.codex.remote.domain.defaultCollaborationMode
 import com.codex.remote.data.security.InputLimitExceededException
 import com.codex.remote.data.ssh.HostKeyChangedException
 import com.codex.remote.data.ssh.RemoteCodexUnavailableException
@@ -475,43 +478,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else if (projectPath.isNullOrBlank()) {
                 state.copy(notice = "No remote Codex project is available for a new task")
             } else {
-                state.copy(
-                    selectedProjectPath = projectPath,
-                    selectedThreadId = null,
-                    threadGoal = null,
-                    isGoalLoading = false,
-                    goalError = null,
-                    threadTokenUsage = null,
-                    timeline = emptyList(),
-                    olderHistoryCursor = null,
-                    hasOlderHistory = false,
-                    isOlderHistoryLoading = false,
-                    olderHistoryError = null,
-                    consumedHistoryCursors = emptySet(),
-                    selectedCollaborationMode = state.defaultCollaborationMode(),
-                )
+                state.withNewTask(projectPath)
             }
         }
     }
 
     fun selectProject(project: RemoteProject) {
-        _state.update {
-            it.copy(
-                selectedProjectPath = project.path,
-                selectedThreadId = null,
-                threadGoal = null,
-                isGoalLoading = false,
-                goalError = null,
-                threadTokenUsage = null,
-                timeline = emptyList(),
-                olderHistoryCursor = null,
-                hasOlderHistory = false,
-                isOlderHistoryLoading = false,
-                olderHistoryError = null,
-                consumedHistoryCursors = emptySet(),
-                selectedCollaborationMode = it.defaultCollaborationMode(),
-            )
-        }
+        _state.update { it.withNewTask(project.path) }
     }
 
     fun selectThread(thread: RemoteThread) {
@@ -526,39 +499,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ?.path
             ?: thread.cwd
         _state.update {
-            it.copy(
-                selectedProjectPath = projectPath,
+            it.withNewTask(projectPath).copy(
                 selectedThreadId = thread.id,
-                threadGoal = null,
                 isGoalLoading = true,
-                goalError = null,
-                threadTokenUsage = null,
-                timeline = emptyList(),
-                olderHistoryCursor = null,
-                hasOlderHistory = false,
-                isOlderHistoryLoading = false,
-                olderHistoryError = null,
-                consumedHistoryCursors = emptySet(),
                 isBusy = true,
                 isTurnRunning = thread.status.isRemoteThreadActive(),
-                activeTurnId = null,
             )
         }
+        val request = ConversationRequest(_state) { rpc === client }
         val turnVersion = turnStateVersion
         val session = runCatching { client.resumeThread(thread.id, thread.cwd) }
             .getOrElse { error ->
                 currentCoroutineContext().ensureActive()
-                if (rpc !== client) return
-                _state.update { state ->
-                    if (rpc === client && state.selectedThreadId == thread.id) state.copy(isGoalLoading = false) else state
+                request.update { state ->
+                    state.copy(
+                        isBusy = false,
+                        isGoalLoading = false,
+                        isTurnRunning = if (turnVersion == turnStateVersion) false else state.isTurnRunning,
+                        activeTurnId = if (turnVersion == turnStateVersion) null else state.activeTurnId,
+                        notice = friendlyError(error),
+                    )
                 }
-                showError(error)
                 return
             }
         currentCoroutineContext().ensureActive()
-        if (rpc !== client) return
-        _state.update { state ->
-            if (state.selectedThreadId != thread.id) return@update state
+        if (!request.isCurrent()) return
+        request.update { state ->
             val model = state.models.firstOrNull { it.id == session.model }
             state.copy(
                 timeline = mergeTimelineHistory(session.timeline, state.timeline),
@@ -588,8 +554,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         runCatching { client.getThreadGoal(thread.id) }
             .onSuccess { goal ->
-                _state.update { state ->
-                    if (rpc === client && state.selectedThreadId == thread.id) {
+                request.update { state ->
+                    if (state.selectedThreadId == thread.id) {
                         state.copy(
                             threadGoal = goal,
                             isGoalLoading = false,
@@ -601,8 +567,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             .onFailure { error ->
-                _state.update { state ->
-                    if (rpc === client && state.selectedThreadId == thread.id) {
+                request.update { state ->
+                    if (state.selectedThreadId == thread.id) {
                         if (error.isUnsupportedRpcMethod("thread/goal/get")) {
                             state.copy(
                                 threadGoal = null,
@@ -645,6 +611,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.activeConnection == null) return
         val client = rpc ?: return
         val currentState = _state.value
+        if (currentState.connectionStatus != ConnectionStatus.CONNECTED || currentState.isBusy) return
+        val request = ConversationRequest(_state) { rpc === client }
         if (currentState.remoteAccount?.canRunCodex != true) {
             _state.update { it.copy(notice = "Remote Codex is not signed in") }
             return
@@ -698,7 +666,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 },
                 isGoal = asGoal,
             )
-            _state.update {
+            request.update {
                 it.copy(
                     timeline = it.timeline + userItem,
                     isTurnRunning = if (asGoal) it.isTurnRunning else true,
@@ -718,7 +686,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     return@runCatching
                 }
-                val threadId = _state.value.selectedThreadId ?: client.startThread(
+                val threadId = currentState.selectedThreadId ?: client.startThread(
                     cwd = cwd,
                     model = selectedModel,
                     serviceTier = selectedServiceTier,
@@ -726,7 +694,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     approvalsReviewer = approvalsReviewer,
                     permissionProfile = permissionProfile,
                 ).let { started ->
-                    _state.update {
+                    request.update {
                         it.copy(
                             selectedThreadId = started.id,
                             selectedModel = started.model ?: it.selectedModel,
@@ -738,13 +706,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     started.id
                 }
+                currentCoroutineContext().ensureActive()
+                if (rpc !== client) return@runCatching
                 if (asGoal) {
                     val goal = client.setThreadGoal(
                         threadId = threadId,
                         objective = prompt,
                         status = ThreadGoalStatus.ACTIVE,
                     )
-                    _state.update { state ->
+                    request.update { state ->
                         if (state.selectedThreadId == threadId) {
                             state.copy(threadGoal = goal, isGoalLoading = false, goalError = null)
                         } else {
@@ -769,10 +739,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }.onSuccess {
                 if (steeringThreadId != null) {
-                    _state.update { it.copy(notice = "Message added to the running task") }
+                    request.update { it.copy(notice = "Message added to the running task") }
                 }
             }.onFailure { error ->
-                _state.update {
+                if (!request.isCurrent()) return@onFailure
+                request.update {
                     it.copy(
                         timeline = it.timeline.filterNot { item -> item.id == localItemId },
                         isTurnRunning = if (asGoal) it.isTurnRunning else steeringThreadId != null,
@@ -782,7 +753,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 if (asGoal) {
-                    _state.update {
+                    request.update {
                         it.copy(notice = "Failed to set goal: ${friendlyGoalError(error)}")
                     }
                 } else {
@@ -920,6 +891,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun forkThread() {
         val client = rpc ?: return
         val snapshot = _state.value
+        val request = ConversationRequest(_state) { rpc === client }
         val threadId = snapshot.selectedThreadId ?: run {
             _state.update { it.copy(notice = "Open a remote task before continuing in a new task") }
             return
@@ -931,7 +903,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val cwd = snapshot.threads.firstOrNull { it.id == threadId }?.cwd
             ?.takeIf(String::isNotBlank) ?: snapshot.selectedProjectPath.orEmpty()
         viewModelScope.launch {
-            _state.update { it.copy(isBusy = true, notice = null) }
+            request.update { it.copy(isBusy = true, notice = null) }
             runCatching {
                 client.forkThread(
                     threadId = threadId,
@@ -943,24 +915,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     permissionProfile = snapshot.selectedPermissionProfile,
                 )
             }.onSuccess { forked ->
-                _state.update { state ->
+                if (!request.isCurrent()) return@onSuccess
+                request.update { state ->
                     val threads = (listOf(forked.thread) + state.threads).distinctBy { it.id }
                     val model = state.models.firstOrNull { it.id == forked.session.model }
-                    state.copy(
+                    state.withNewTask(forked.thread.cwd.ifBlank { state.selectedProjectPath.orEmpty() }).copy(
                         threads = threads,
                         projects = groupThreadsByProject(threads),
-                        selectedProjectPath = forked.thread.cwd.ifBlank { state.selectedProjectPath.orEmpty() },
                         selectedThreadId = forked.thread.id,
-                        threadGoal = null,
-                        isGoalLoading = false,
-                        goalError = null,
-                        threadTokenUsage = null,
                         timeline = forked.session.timeline,
                         olderHistoryCursor = forked.session.olderHistoryCursor,
                         hasOlderHistory = forked.session.olderHistoryCursor != null,
-                        isOlderHistoryLoading = false,
-                        olderHistoryError = null,
-                        consumedHistoryCursors = emptySet(),
                         selectedModel = model?.id ?: state.selectedModel,
                         selectedReasoningEffort = forked.session.reasoningEffort
                             ?.takeIf { effort -> model?.supports(effort) == true }
@@ -975,34 +940,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         selectedPermissionProfile = forked.session.permissionProfile,
                         approvalPolicy = forked.session.approvalPolicy ?: state.approvalPolicy,
                         approvalsReviewer = forked.session.approvalsReviewer ?: state.approvalsReviewer,
-                        isBusy = false,
                         notice = "Continued in a new remote task",
                     )
                 }
-            }.onFailure(::showError)
+            }.onFailure { if (request.isCurrent()) showError(it) }
         }
     }
 
     fun startReview(targetKind: ReviewTargetKind, targetValue: String = "") {
         val client = rpc ?: return
         val snapshot = _state.value
+        val request = ConversationRequest(_state) { rpc === client }
         val threadId = snapshot.selectedThreadId ?: run {
-            _state.update { it.copy(notice = "Open a remote task before starting a code review") }
+            request.update { it.copy(notice = "Open a remote task before starting a code review") }
             return
         }
         if (snapshot.isTurnRunning) {
-            _state.update { it.copy(notice = "Stop the running task before starting a code review") }
+            request.update { it.copy(notice = "Stop the running task before starting a code review") }
             return
         }
         if (targetKind != ReviewTargetKind.UNCOMMITTED_CHANGES && targetValue.isBlank()) {
-            _state.update { it.copy(notice = "Enter a review target") }
+            request.update { it.copy(notice = "Enter a review target") }
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(isTurnRunning = true, notice = null) }
+            request.update { it.copy(isTurnRunning = true, notice = null) }
             runCatching { client.startReview(threadId, targetKind, targetValue) }
                 .onSuccess { review ->
-                    _state.update {
+                    request.update {
                         it.copy(
                             isTurnRunning = true,
                             activeTurnId = review.turnId,
@@ -1010,7 +975,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isTurnRunning = false, activeTurnId = null) }
+                    if (!request.isCurrent()) return@onFailure
+                    request.update { it.copy(isTurnRunning = false, activeTurnId = null) }
                     showError(error)
                 }
         }
@@ -1685,30 +1651,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     if (rpc !== client) return@onSuccess
                     val projects = groupThreadsByProject(threads)
                     _state.update { state ->
-                        val selectedPath = state.selectedProjectPath
-                            ?.takeIf { path -> projects.any { it.path == path } }
-                            ?: projects.firstOrNull()?.path
-                        val selectedThreadId = state.selectedThreadId
-                            ?.takeIf { id -> threads.any { it.id == id } }
-                        state.copy(
-                            threads = threads,
-                            projects = projects,
-                            selectedProjectPath = selectedPath,
-                            selectedThreadId = selectedThreadId,
-                            threadGoal = if (selectedThreadId == null) null else state.threadGoal,
-                            isGoalLoading = if (selectedThreadId == null) false else state.isGoalLoading,
-                            goalError = if (selectedThreadId == null) null else state.goalError,
-                            threadTokenUsage = if (selectedThreadId == null) null else state.threadTokenUsage,
-                            timeline = if (selectedThreadId == null && state.selectedThreadId != null) {
-                                emptyList()
-                            } else {
-                                state.timeline
-                            },
-                            olderHistoryCursor = if (selectedThreadId == null) null else state.olderHistoryCursor,
-                            hasOlderHistory = if (selectedThreadId == null) false else state.hasOlderHistory,
-                            isOlderHistoryLoading = if (selectedThreadId == null) false else state.isOlderHistoryLoading,
-                            olderHistoryError = if (selectedThreadId == null) null else state.olderHistoryError,
-                            consumedHistoryCursors = if (selectedThreadId == null) emptySet() else state.consumedHistoryCursors,
+                        state.withThreadCatalog(threads).copy(
                             connectionMessage = connectionSummary(
                                 projects.size,
                                 threads.size,
@@ -1840,11 +1783,6 @@ private fun RemoteModel.supports(effort: String): Boolean =
 private fun RemoteModel.preferredReasoningEffort(): String? =
     defaultReasoningEffort?.takeIf(::supports)
         ?: supportedReasoningEfforts.firstOrNull()?.value
-
-private fun AppUiState.defaultCollaborationMode(): String =
-    collaborationModes.firstOrNull { it.mode == "default" }?.mode
-        ?: collaborationModes.firstOrNull()?.mode
-        ?: "default"
 
 private fun String.isActiveTimelineStatus(): Boolean =
     equals("inProgress", ignoreCase = true) ||

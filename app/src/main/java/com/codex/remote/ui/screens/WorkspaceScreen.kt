@@ -2021,16 +2021,16 @@ private fun Composer(
     onClearRemoteDirectory: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var text by remember(state.selectedThreadId) { mutableStateOf(TextFieldValue()) }
-    var selectedMentions by remember(state.selectedThreadId) { mutableStateOf(emptyList<ComposerMention>()) }
-    var attachments by remember(state.selectedThreadId) { mutableStateOf(emptyList<ComposerImageAttachment>()) }
-    var attachmentError by remember(state.selectedThreadId) { mutableStateOf<String?>(null) }
-    var mentionKindFilter by remember(state.selectedThreadId) { mutableStateOf<ComposerMentionKind?>(null) }
-    var modelSettingsMenu by remember(state.selectedThreadId) { mutableStateOf(false) }
-    var modelSettingsPage by remember(state.selectedThreadId) { mutableStateOf(ModelSettingsPage.ROOT) }
-    var addMenuOpen by remember(state.selectedThreadId) { mutableStateOf(false) }
-    var showRemotePathPicker by remember(state.selectedThreadId) { mutableStateOf(false) }
-    var goalModeActive by remember(state.selectedThreadId) { mutableStateOf(false) }
+    var text by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(TextFieldValue()) }
+    var selectedMentions by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(emptyList<ComposerMention>()) }
+    var attachments by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(emptyList<ComposerImageAttachment>()) }
+    var attachmentError by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf<String?>(null) }
+    var mentionKindFilter by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf<ComposerMentionKind?>(null) }
+    var modelSettingsMenu by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
+    var modelSettingsPage by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(ModelSettingsPage.ROOT) }
+    var addMenuOpen by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
+    var showRemotePathPicker by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
+    var goalModeActive by remember(state.selectedThreadId, state.conversationRevision) { mutableStateOf(false) }
     var policyMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val composerScope = rememberCoroutineScope()
@@ -2547,7 +2547,7 @@ private fun Composer(
                                         }
                                     }
                                 },
-                                enabled = if (goalModeActive || inlineGoalObjective != null) {
+                                enabled = !state.isBusy && if (goalModeActive || inlineGoalObjective != null) {
                                     text.text.isNotBlank() && !state.isTurnRunning && !state.isGoalLoading
                                 } else {
                                     (text.text.isNotBlank() || attachments.isNotEmpty()) &&

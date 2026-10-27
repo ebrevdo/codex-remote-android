@@ -35,6 +35,23 @@ protocol violations and input-limit failures stop automatic retries. Explicit
 disconnect cancels pending recovery. Neither a network event nor returning to the
 app overrides those decisions.
 
+## Task navigation
+
+Choosing New task or switching projects clears the previous task's running state,
+turn ID, history-loading state and composer draft. It does not stop the remote turn.
+Task creation and resume responses are tied to the selection and connection that
+started them, so delayed results cannot reopen an abandoned task or disable the
+new composer. A failed resume clears loading state and reports its error.
+
+Refreshing the task list updates the sidebar without changing the open task. A
+list response can predate a newly created task, so omission from that list must
+not clear its selection, history or live-event subscription.
+
+JVM regressions cover new-task resets, stale catalogs, pending task creation,
+reopening the same task, connection replacement and archive selection. The Android
+regression opens a new task during restoration and verifies that sending works;
+it requires a device or emulator to execute.
+
 ## Input bounds
 
 Parser-depth, fragment and queued-message-count bounds apply to WebSocket input,
