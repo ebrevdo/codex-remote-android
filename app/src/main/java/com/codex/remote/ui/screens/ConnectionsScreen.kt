@@ -47,15 +47,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -91,21 +88,14 @@ fun ConnectionsScreen(
     onCloseEditor: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
     var pendingDelete by remember { mutableStateOf<SavedConnection?>(null) }
-    LaunchedEffect(state.notice) {
-        state.notice?.let {
-            snackbarHostState.showSnackbar(it)
-            onDismissNotice()
-        }
-    }
-
     if (state.showConnectionEditor && state.connectionDraft != null) {
         ConnectionEditor(
             original = state.editingConnection,
             draft = state.connectionDraft,
             busy = state.isBusy,
-            snackbarHostState = snackbarHostState,
+            notice = state.notice,
+            onDismissNotice = onDismissNotice,
             onDraftChange = onUpdateDraft,
             onDismiss = onCloseEditor,
             onSave = onSave,
@@ -115,7 +105,7 @@ fun ConnectionsScreen(
 
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = { ConnectionNotice(state.notice, onDismissNotice) },
         topBar = {
             TopAppBar(
                 title = { Text("Remote hosts") },
@@ -297,7 +287,8 @@ private fun ConnectionEditor(
     original: SavedConnection?,
     draft: ConnectionDraft,
     busy: Boolean,
-    snackbarHostState: SnackbarHostState,
+    notice: String?,
+    onDismissNotice: () -> Unit,
     onDraftChange: (ConnectionDraft) -> Unit,
     onDismiss: () -> Unit,
     onSave: (ConnectionDraft, Boolean) -> Unit,
@@ -313,7 +304,6 @@ private fun ConnectionEditor(
     Scaffold(
         modifier = Modifier.fillMaxSize().imePadding(),
         contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(if (original == null) "Add SSH host" else "Edit SSH host") },
@@ -337,6 +327,7 @@ private fun ConnectionEditor(
                     .verticalScroll(rememberScrollState()).padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                ConnectionNotice(notice, onDismissNotice)
                 SectionLabel("CONNECTION")
                 OutlinedTextField(
                     enabled = !busy,
@@ -566,3 +557,14 @@ private val RemotePlatform.displayName: String
         RemotePlatform.POSIX -> "Linux / macOS"
         RemotePlatform.WINDOWS -> "Windows"
     }
+
+@Composable
+private fun ConnectionNotice(message: String?, onDismiss: () -> Unit) {
+    if (message == null) return
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(message, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = onDismiss) { Text("Dismiss") }
+        }
+    }
+}

@@ -56,7 +56,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -79,7 +78,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         checkConnection = ::checkConnection,
         reconnect = { _state.value.activeConnection?.let { connect(it, automatic = true) } },
         onWaiting = { wait ->
-            _state.update {
+            _state.updateWithNotices {
                 it.copy(
                     connectionStatus = ConnectionStatus.CONNECTING,
                     isReconnecting = true,
@@ -106,7 +105,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     null
                 }
                 val restoreConnection = connectionToRestore?.takeIf { _state.value.activeConnection == null }
-                _state.update { current ->
+                _state.updateWithNotices { current ->
                     val refreshedActive = current.activeConnection?.let { active ->
                         connections.firstOrNull { it.id == active.id } ?: active
                     }
@@ -127,11 +126,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun showConnections(show: Boolean = true) = _state.update {
+    fun showConnections(show: Boolean = true) = _state.updateWithNotices {
         it.copy(showConnections = show, showConnectionEditor = false, editingConnection = null, connectionDraft = null)
     }
 
-    fun editConnection(connection: SavedConnection? = null) = _state.update {
+    fun editConnection(connection: SavedConnection? = null) = _state.updateWithNotices {
         it.copy(
             showConnections = true,
             showConnectionEditor = true,
@@ -141,21 +140,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun updateConnectionDraft(draft: ConnectionDraft) = _state.update {
+    fun updateConnectionDraft(draft: ConnectionDraft) = _state.updateWithNotices {
         if (it.showConnectionEditor && !it.isBusy) it.copy(connectionDraft = draft) else it
     }
 
-    fun closeEditor() = _state.update {
+    fun closeEditor() = _state.updateWithNotices {
         it.copy(showConnectionEditor = false, editingConnection = null, connectionDraft = null)
     }
 
     fun saveConnection(draft: ConnectionDraft, connectAfterSave: Boolean) {
         viewModelScope.launch {
-            _state.update { it.copy(isBusy = true, notice = null) }
+            _state.updateWithNotices { it.copy(isBusy = true, notice = null) }
             runCatching {
                 store.save(draft, _state.value.editingConnection)
             }.onSuccess { saved ->
-                _state.update {
+                _state.updateWithNotices {
                     it.copy(
                         isBusy = false,
                         showConnectionEditor = false,
@@ -190,7 +189,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         closeClient()
         recovery.connecting(resetBackoff = !automatic)
         if (sameHost) {
-            _state.update {
+            _state.updateWithNotices {
                 it.copy(
                     activeConnection = connection,
                     connectionStatus = ConnectionStatus.CONNECTING,
@@ -208,7 +207,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         } else {
             disconnectInternal(clearActive = false)
-            _state.update {
+            _state.updateWithNotices {
                 it.copy(
                     activeConnection = connection,
                     connectionStatus = ConnectionStatus.CONNECTING,
@@ -290,7 +289,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val projects = groupThreadsByProject(threads)
                 val model = models.firstOrNull { sameHost && it.id == previous.selectedModel }
                     ?: models.firstOrNull { it.isDefault } ?: models.firstOrNull()
-                _state.update {
+                _state.updateWithNotices {
                     it.copy(
                         models = models,
                         selectedModel = model?.id,
@@ -313,7 +312,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 currentCoroutineContext().ensureActive()
                 client.failure.value?.let { throw it }
-                _state.update {
+                _state.updateWithNotices {
                     it.copy(
                         connectionStatus = ConnectionStatus.CONNECTED,
                         connectionMessage = connectionSummary(projects.size, threads.size, server.codexVersion),
@@ -335,7 +334,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setAppForeground(foreground: Boolean) {
-        if (!foreground) _state.update { it.copy(isCheckingConnection = false) }
+        if (!foreground) _state.updateWithNotices { it.copy(isCheckingConnection = false) }
         recovery.setForeground(foreground)
     }
 
@@ -348,7 +347,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun checkConnection() {
         val client = rpc ?: return
-        _state.update { it.copy(isCheckingConnection = true) }
+        _state.updateWithNotices { it.copy(isCheckingConnection = true) }
         try {
             client.checkHealth()
         } catch (error: CancellationException) {
@@ -356,7 +355,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (error: Exception) {
             if (rpc === client) connectionFailed(error)
         } finally {
-            if (rpc === client) _state.update { it.copy(isCheckingConnection = false) }
+            if (rpc === client) _state.updateWithNotices { it.copy(isCheckingConnection = false) }
         }
     }
 
@@ -365,7 +364,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         closeClient()
         val unknownHostKey = generateSequence(error) { it.cause }.filterIsInstance<UnknownHostKeyException>().firstOrNull()
-        _state.update {
+        _state.updateWithNotices {
             it.copy(
                 connectionStatus = ConnectionStatus.ERROR,
                 connectionMessage = if (unknownHostKey != null) "Confirm the SSH host fingerprint to connect" else friendlyError(error),
@@ -400,12 +399,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val fingerprint = _state.value.pendingHostKeyFingerprint ?: return
         viewModelScope.launch {
             store.recordFingerprint(connection.id, fingerprint)
-            _state.update { it.copy(pendingHostKeyFingerprint = null) }
+            _state.updateWithNotices { it.copy(pendingHostKeyFingerprint = null) }
             connect(connection.copy(hostKeyFingerprint = fingerprint))
         }
     }
 
-    fun rejectPendingHostKey() = _state.update {
+    fun rejectPendingHostKey() = _state.updateWithNotices {
         it.copy(
             pendingHostKeyFingerprint = null,
             connectionStatus = ConnectionStatus.ERROR,
@@ -422,7 +421,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun disconnectInternal(clearActive: Boolean) {
         closeClient()
-        _state.update {
+        _state.updateWithNotices {
             it.copy(
                 activeConnection = if (clearActive) null else it.activeConnection,
                 connectionStatus = ConnectionStatus.DISCONNECTED,
@@ -478,7 +477,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun newThread() {
-        _state.update { state ->
+        _state.updateWithNotices { state ->
             val projectPath = state.selectedProjectPath ?: state.projects.firstOrNull()?.path
             if (state.remoteAccount?.canRunCodex != true) {
                 state.copy(notice = "Sign in to remote Codex first")
@@ -491,7 +490,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectProject(project: RemoteProject) {
-        _state.update { it.withNewTask(project.path) }
+        _state.updateWithNotices { it.withNewTask(project.path) }
     }
 
     fun selectThread(thread: RemoteThread) {
@@ -505,7 +504,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .firstOrNull { project -> project.threads.any { it.id == thread.id } }
             ?.path
             ?: thread.cwd
-        _state.update {
+        _state.updateWithNotices {
             it.withResumedThread(thread, projectPath, restoring).copy(
                 isTurnRunning = thread.status.isRemoteThreadActive(),
             )
@@ -618,20 +617,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (currentState.connectionStatus != ConnectionStatus.CONNECTED || currentState.isBusy) return
         val request = ConversationRequest(_state) { rpc === client }
         if (currentState.remoteAccount?.canRunCodex != true) {
-            _state.update { it.copy(notice = "Remote Codex is not signed in") }
+            _state.updateWithNotices { it.copy(notice = "Remote Codex is not signed in") }
             return
         }
         if (asGoal && prompt.isEmpty()) {
-            _state.update { it.copy(notice = "Enter a written objective for the goal") }
+            _state.updateWithNotices { it.copy(notice = "Enter a written objective for the goal") }
             return
         }
         if (asGoal && currentState.isTurnRunning) {
-            _state.update { it.copy(notice = "Stop the running task before setting a goal") }
+            _state.updateWithNotices { it.copy(notice = "Stop the running task before setting a goal") }
             return
         }
         val selectedModel = currentState.selectedModel
         if (selectedModel == null) {
-            _state.update { it.copy(notice = "The remote host returned no available models") }
+            _state.updateWithNotices { it.copy(notice = "The remote host returned no available models") }
             return
         }
         val selectedReasoningEffort = currentState.selectedReasoningEffort
@@ -646,14 +645,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ?.takeIf { it.isNotBlank() }
             ?: currentState.selectedProjectPath?.takeIf { it.isNotBlank() }
         if (cwd == null) {
-            _state.update { it.copy(notice = "Select a remote project first") }
+            _state.updateWithNotices { it.copy(notice = "Select a remote project first") }
             return
         }
         val mentions = resolveComposerMentions(prompt, cwd, selectedMentions, currentState)
         val steeringThreadId = currentState.selectedThreadId.takeIf { currentState.isTurnRunning }
         val steeringTurnId = currentState.activeTurnId.takeIf { currentState.isTurnRunning }
         if (currentState.isTurnRunning && (steeringThreadId == null || steeringTurnId == null)) {
-            _state.update { it.copy(notice = "Restoring the running task. Wait for it to sync before adding a message.") }
+            _state.updateWithNotices { it.copy(notice = "Restoring the running task. Wait for it to sync before adding a message.") }
             return
         }
         viewModelScope.launch {
@@ -773,7 +772,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         viewModelScope.launch {
             runCatching { client.renameThread(thread.id, trimmedName) }
-                .onSuccess { _state.update { it.withThreadRenamed(thread.id, trimmedName) } }
+                .onSuccess { _state.updateWithNotices { it.withThreadRenamed(thread.id, trimmedName) } }
                 .onFailure(::showError)
         }
     }
@@ -781,13 +780,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun archiveThread(thread: RemoteThread) {
         val client = rpc ?: return
         if (_state.value.isTurnRunning && _state.value.selectedThreadId == thread.id) {
-            _state.update { it.copy(notice = "Stop the running task before archiving it") }
+            _state.updateWithNotices { it.copy(notice = "Stop the running task before archiving it") }
             return
         }
         viewModelScope.launch {
             runCatching { client.archiveThread(thread.id) }
                 .onSuccess {
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         state.withThreadArchived(thread.id).copy(
                             archivedThreads = (listOf(thread) + state.archivedThreads)
                                 .distinctBy { it.id }
@@ -802,10 +801,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun loadArchivedThreads() {
         val client = rpc ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isArchivedThreadsLoading = true, archivedThreadsError = null) }
+            _state.updateWithNotices { it.copy(isArchivedThreadsLoading = true, archivedThreadsError = null) }
             runCatching { client.listArchivedThreads() }
                 .onSuccess { archived ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(
                             archivedThreads = archived,
                             isArchivedThreadsLoading = false,
@@ -814,7 +813,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(
                             isArchivedThreadsLoading = false,
                             archivedThreadsError = friendlyError(error),
@@ -829,7 +828,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.unarchiveThread(thread.id) }
                 .onSuccess { restored ->
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         val threads = (listOf(restored) + state.threads).distinctBy { it.id }
                         state.copy(
                             threads = threads,
@@ -848,7 +847,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.deleteThread(thread.id) }
                 .onSuccess {
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         state.copy(
                             archivedThreads = state.archivedThreads.filterNot { it.id == thread.id },
                             notice = "Task permanently deleted",
@@ -864,7 +863,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.setThreadPinned(thread.id, isPinned) }
                 .onSuccess { updated ->
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         val threads = state.threads.map { current ->
                             if (current.id == updated.id) updated else current
                         }
@@ -878,16 +877,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun compactThread() {
         val client = rpc ?: return
         val threadId = _state.value.selectedThreadId ?: run {
-            _state.update { it.copy(notice = "This new task has no context to compact yet") }
+            _state.updateWithNotices { it.copy(notice = "This new task has no context to compact yet") }
             return
         }
         if (_state.value.isTurnRunning) {
-            _state.update { it.copy(notice = "Stop the running task before compacting its context") }
+            _state.updateWithNotices { it.copy(notice = "Stop the running task before compacting its context") }
             return
         }
         viewModelScope.launch {
             runCatching { client.compactThread(threadId) }
-                .onSuccess { _state.update { it.copy(notice = "Compacting task context") } }
+                .onSuccess { _state.updateWithNotices { it.copy(notice = "Compacting task context") } }
                 .onFailure(::showError)
         }
     }
@@ -897,11 +896,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val snapshot = _state.value
         val request = ConversationRequest(_state) { rpc === client }
         val threadId = snapshot.selectedThreadId ?: run {
-            _state.update { it.copy(notice = "Open a remote task before continuing in a new task") }
+            _state.updateWithNotices { it.copy(notice = "Open a remote task before continuing in a new task") }
             return
         }
         if (snapshot.isTurnRunning) {
-            _state.update { it.copy(notice = "Stop the running task before continuing in a new task") }
+            _state.updateWithNotices { it.copy(notice = "Stop the running task before continuing in a new task") }
             return
         }
         val cwd = snapshot.threads.firstOrNull { it.id == threadId }?.cwd
@@ -990,14 +989,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         val snapshot = _state.value
         if (snapshot.isTurnRunning) {
-            _state.update { it.copy(notice = "Stop the running task before using /init") }
+            _state.updateWithNotices { it.copy(notice = "Stop the running task before using /init") }
             return
         }
         val cwd = snapshot.threads.firstOrNull { it.id == snapshot.selectedThreadId }?.cwd
             ?.takeIf(String::isNotBlank)
             ?: snapshot.selectedProjectPath?.takeIf(String::isNotBlank)
             ?: run {
-                _state.update { it.copy(notice = "Select a remote project first") }
+                _state.updateWithNotices { it.copy(notice = "Select a remote project first") }
                 return
             }
         viewModelScope.launch {
@@ -1005,7 +1004,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { client.remotePathExists(agentsPath) }
                 .onSuccess { exists ->
                     if (exists) {
-                        _state.update { it.copy(notice = "AGENTS.md already exists. /init was skipped to preserve it.") }
+                        _state.updateWithNotices { it.copy(notice = "AGENTS.md already exists. /init was skipped to preserve it.") }
                     } else {
                         sendMessage(INIT_PROMPT)
                     }
@@ -1018,15 +1017,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         val threadId = _state.value.selectedThreadId
         viewModelScope.launch {
-            _state.update { it.copy(isMcpStatusLoading = true, mcpStatusError = null) }
+            _state.updateWithNotices { it.copy(isMcpStatusLoading = true, mcpStatusError = null) }
             runCatching { client.listMcpServerStatuses(threadId) }
                 .onSuccess { servers ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(mcpServers = servers, isMcpStatusLoading = false, mcpStatusError = null)
                     }
                 }
                 .onFailure { error ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(
                             mcpServers = emptyList(),
                             isMcpStatusLoading = false,
@@ -1041,16 +1040,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         val threadId = _state.value.selectedThreadId
         viewModelScope.launch {
-            _state.update { it.copy(isMcpStatusLoading = true, mcpStatusError = null) }
+            _state.updateWithNotices { it.copy(isMcpStatusLoading = true, mcpStatusError = null) }
             runCatching {
                 client.reloadMcpServers()
                 client.listMcpServerStatuses(threadId)
             }.onSuccess { servers ->
-                _state.update {
+                _state.updateWithNotices {
                     it.copy(mcpServers = servers, isMcpStatusLoading = false, mcpStatusError = null)
                 }
             }.onFailure { error ->
-                _state.update {
+                _state.updateWithNotices {
                     it.copy(isMcpStatusLoading = false, mcpStatusError = friendlyError(error))
                 }
             }
@@ -1061,10 +1060,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         val threadId = _state.value.selectedThreadId
         viewModelScope.launch {
-            _state.update { it.copy(isMcpLoginStarting = true, mcpStatusError = null) }
+            _state.updateWithNotices { it.copy(isMcpLoginStarting = true, mcpStatusError = null) }
             runCatching { client.startMcpOauthLogin(serverName, threadId) }
                 .onSuccess { authorizationUrl ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(
                             isMcpLoginStarting = false,
                             mcpAuthorizationUrl = authorizationUrl,
@@ -1073,22 +1072,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(isMcpLoginStarting = false, mcpStatusError = friendlyError(error))
                     }
                 }
         }
     }
 
-    fun clearMcpAuthorizationUrl() = _state.update { it.copy(mcpAuthorizationUrl = null) }
+    fun clearMcpAuthorizationUrl() = _state.updateWithNotices { it.copy(mcpAuthorizationUrl = null) }
 
     fun submitFeedback(classification: String, reason: String) {
         val client = rpc ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isFeedbackSubmitting = true, feedbackError = null) }
+            _state.updateWithNotices { it.copy(isFeedbackSubmitting = true, feedbackError = null) }
             runCatching { client.submitFeedback(classification, reason) }
                 .onSuccess { feedbackId ->
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(
                             isFeedbackSubmitting = false,
                             feedbackError = null,
@@ -1102,21 +1101,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     val message = friendlyError(error)
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(isFeedbackSubmitting = false, feedbackError = message, notice = message)
                     }
                 }
         }
     }
 
-    fun showGoalRequirement() = _state.update {
+    fun showGoalRequirement() = _state.updateWithNotices {
         it.copy(notice = "Send your first message to create a remote task, then use /goal to set a goal")
     }
 
     fun setThreadGoal(objective: String) {
         val trimmedObjective = objective.trim()
         if (trimmedObjective.isEmpty()) {
-            _state.update { it.copy(goalError = "Enter a goal") }
+            _state.updateWithNotices { it.copy(goalError = "Enter a goal") }
             return
         }
         val client = rpc ?: return
@@ -1125,7 +1124,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(isGoalLoading = true, goalError = null) }
+            _state.updateWithNotices { it.copy(isGoalLoading = true, goalError = null) }
             runCatching {
                 client.setThreadGoal(
                     threadId = threadId,
@@ -1133,7 +1132,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     status = ThreadGoalStatus.ACTIVE,
                 )
             }.onSuccess { goal ->
-                _state.update { state ->
+                _state.updateWithNotices { state ->
                     if (state.selectedThreadId == threadId) {
                         state.copy(threadGoal = goal, isGoalLoading = false, goalError = null)
                     } else {
@@ -1153,10 +1152,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(isGoalLoading = true, goalError = null) }
+            _state.updateWithNotices { it.copy(isGoalLoading = true, goalError = null) }
             runCatching { client.setThreadGoal(threadId = threadId, status = status) }
                 .onSuccess { goal ->
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         if (state.selectedThreadId == threadId) {
                             state.copy(threadGoal = goal, isGoalLoading = false, goalError = null)
                         } else {
@@ -1174,10 +1173,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         val threadId = _state.value.selectedThreadId ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isGoalLoading = true, goalError = null) }
+            _state.updateWithNotices { it.copy(isGoalLoading = true, goalError = null) }
             runCatching { client.clearThreadGoal(threadId) }
                 .onSuccess {
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         if (state.selectedThreadId == threadId) {
                             state.copy(threadGoal = null, isGoalLoading = false, goalError = null)
                         } else {
@@ -1194,17 +1193,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun showConnectionStatus() {
         val client = rpc ?: return
         viewModelScope.launch {
-            _state.update { it.copy(isStatusLoading = true, statusError = null) }
+            _state.updateWithNotices { it.copy(isStatusLoading = true, statusError = null) }
             runCatching { client.readRateLimits() }
                 .onSuccess { limits ->
                     if (rpc !== client) return@onSuccess
-                    _state.update {
+                    _state.updateWithNotices {
                         it.copy(rateLimits = limits, isStatusLoading = false, statusError = null)
                     }
                 }
                 .onFailure { error ->
                     if (rpc !== client) return@onFailure
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         if (error.isUnsupportedRpcMethod("account/rateLimits/read")) {
                             state.copy(rateLimits = null, isStatusLoading = false, statusError = null)
                         } else {
@@ -1234,7 +1233,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.respondToApproval(approval, decision, answers) }
                 .onSuccess {
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         if (state.pendingApproval === approval) {
                             state.copy(pendingApproval = null)
                         } else {
@@ -1250,13 +1249,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val client = rpc ?: return
         if (_state.value.isLoginStarting || _state.value.remoteDeviceLogin != null) return
         viewModelScope.launch {
-            _state.update { it.copy(isLoginStarting = true, notice = null) }
+            _state.updateWithNotices { it.copy(isLoginStarting = true, notice = null) }
             runCatching { client.startDeviceLogin() }
                 .onSuccess { login ->
-                    _state.update { it.copy(remoteDeviceLogin = login, isLoginStarting = false) }
+                    _state.updateWithNotices { it.copy(remoteDeviceLogin = login, isLoginStarting = false) }
                 }
                 .onFailure { error ->
-                    _state.update { it.copy(isLoginStarting = false) }
+                    _state.updateWithNotices { it.copy(isLoginStarting = false) }
                     showError(error)
                 }
         }
@@ -1265,14 +1264,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelRemoteLogin() {
         val login = _state.value.remoteDeviceLogin ?: return
         val client = rpc ?: return
-        _state.update { it.copy(remoteDeviceLogin = null, isLoginStarting = false) }
+        _state.updateWithNotices { it.copy(remoteDeviceLogin = null, isLoginStarting = false) }
         viewModelScope.launch {
             runCatching { client.cancelLogin(login.loginId) }.onFailure(::showError)
         }
     }
 
-    fun setModel(modelId: String) = _state.update { state ->
-        val model = state.models.firstOrNull { it.id == modelId } ?: return@update state
+    fun setModel(modelId: String) = _state.updateWithNotices { state ->
+        val model = state.models.firstOrNull { it.id == modelId } ?: return@updateWithNotices state
         state.copy(
             selectedModel = model.id,
             selectedReasoningEffort = model.preferredReasoningEffort(),
@@ -1280,13 +1279,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun setReasoningEffort(effort: String) = _state.update { state ->
+    fun setReasoningEffort(effort: String) = _state.updateWithNotices { state ->
         val model = state.models.firstOrNull { it.id == state.selectedModel }
         if (model?.supports(effort) == true) state.copy(selectedReasoningEffort = effort) else state
     }
 
-    fun setServiceTier(serviceTier: String?) = _state.update { state ->
-        val model = state.models.firstOrNull { it.id == state.selectedModel } ?: return@update state
+    fun setServiceTier(serviceTier: String?) = _state.updateWithNotices { state ->
+        val model = state.models.firstOrNull { it.id == state.selectedModel } ?: return@updateWithNotices state
         if (serviceTier == null || model.serviceTiers.any { it.id == serviceTier }) {
             state.copy(selectedServiceTier = serviceTier)
         } else {
@@ -1294,7 +1293,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setCollaborationMode(mode: String) = _state.update { state ->
+    fun setCollaborationMode(mode: String) = _state.updateWithNotices { state ->
         if (state.collaborationModes.any { it.mode == mode }) {
             state.copy(
                 selectedCollaborationMode = mode,
@@ -1305,7 +1304,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPermissionProfile(profileId: String?) = _state.update { state ->
+    fun setPermissionProfile(profileId: String?) = _state.updateWithNotices { state ->
         if (profileId == null || profileId in BUILT_IN_PERMISSION_PROFILES ||
             state.permissionProfiles.any { it.id == profileId && it.allowed }
         ) {
@@ -1315,7 +1314,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun setPermissionMode(mode: PermissionMode) = _state.update { state ->
+    fun setPermissionMode(mode: PermissionMode) = _state.updateWithNotices { state ->
         when (mode) {
             PermissionMode.ASK -> state.copy(
                 selectedPermissionProfile = ":workspace",
@@ -1359,7 +1358,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun loadRemoteDirectory(path: String) {
         val client = rpc ?: return
         if (path.isBlank()) return
-        _state.update {
+        _state.updateWithNotices {
             it.copy(
                 remoteDirectoryPath = path,
                 remoteDirectoryEntries = emptyList(),
@@ -1370,8 +1369,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             runCatching { client.readRemoteDirectory(path) }
                 .onSuccess { entries ->
-                    _state.update { state ->
-                        if (state.remoteDirectoryPath != path) return@update state
+                    _state.updateWithNotices { state ->
+                        if (state.remoteDirectoryPath != path) return@updateWithNotices state
                         state.copy(
                             remoteDirectoryEntries = entries.sortedWith(
                                 compareBy<RemotePathEntry> { !it.isDirectory }
@@ -1383,8 +1382,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 .onFailure { error ->
-                    _state.update { state ->
-                        if (state.remoteDirectoryPath != path) return@update state
+                    _state.updateWithNotices { state ->
+                        if (state.remoteDirectoryPath != path) return@updateWithNotices state
                         state.copy(
                             remoteDirectoryEntries = emptyList(),
                             isRemoteDirectoryLoading = false,
@@ -1394,7 +1393,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
         }
     }
-    fun clearRemoteDirectory() = _state.update {
+    fun clearRemoteDirectory() = _state.updateWithNotices {
         it.copy(
             remoteDirectoryPath = null,
             remoteDirectoryEntries = emptyList(),
@@ -1402,7 +1401,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             remoteDirectoryError = null,
         )
     }
-    fun clearNotice() = _state.update { it.copy(notice = null) }
+    fun clearNotice() = _state.updateWithNotices { it.copy(notice = null) }
 
     private fun observeEvents(client: CodexRpcClient) {
         failureJob?.cancel()
@@ -1424,7 +1423,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     is AppServerEvent.TurnRunning -> {
                         if (!_state.value.acceptsThreadEvent(event.threadId)) return@collect
                         turnStateVersion++
-                        _state.update { state ->
+                        _state.updateWithNotices { state ->
                             state.copy(
                                 isTurnRunning = event.running,
                                 activeTurnId = if (event.running) event.turnId else null,
@@ -1442,7 +1441,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     is AppServerEvent.Approval -> {
                         val state = _state.value
                         if (state.acceptsThreadEvent(event.threadId) && state.pendingApproval == null) {
-                            _state.update { it.copy(pendingApproval = event.request) }
+                            _state.updateWithNotices { it.copy(pendingApproval = event.request) }
                         } else {
                             // Never overwrite a dialog the user is currently reviewing.
                             runCatching { client.respondToApproval(event.request, "decline") }.onFailure(::showError)
@@ -1451,7 +1450,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     AppServerEvent.AccountChanged -> refreshRemoteAccount()
                     AppServerEvent.ThreadsChanged -> refreshThreads()
                     AppServerEvent.SkillsChanged -> refreshComposerCatalog(forceReload = true)
-                    is AppServerEvent.GoalUpdated -> _state.update { state ->
+                    is AppServerEvent.GoalUpdated -> _state.updateWithNotices { state ->
                         if (state.selectedThreadId == event.threadId) {
                             state.copy(threadGoal = event.goal, isGoalLoading = false, goalError = null)
                         } else {
@@ -1459,7 +1458,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     is AppServerEvent.GoalCleared -> {
-                        _state.update { state ->
+                        _state.updateWithNotices { state ->
                             if (state.selectedThreadId == event.threadId) {
                                 state.copy(threadGoal = null, isGoalLoading = false, goalError = null)
                             } else {
@@ -1467,30 +1466,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
-                    is AppServerEvent.TokenUsageUpdated -> _state.update { state ->
+                    is AppServerEvent.TokenUsageUpdated -> _state.updateWithNotices { state ->
                         if (state.selectedThreadId == event.threadId) {
                             state.copy(threadTokenUsage = event.usage)
                         } else {
                             state
                         }
                     }
-                    is AppServerEvent.RateLimitsUpdated -> _state.update {
+                    is AppServerEvent.RateLimitsUpdated -> _state.updateWithNotices {
                         it.copy(rateLimits = event.rateLimits, isStatusLoading = false, statusError = null)
                     }
                     is AppServerEvent.ContextCompacted -> {
                         if (_state.value.selectedThreadId == event.threadId) {
-                            _state.update { state ->
+                            _state.updateWithNotices { state ->
                                 val marker = TimelineItem(
                                     id = "compaction-${UUID.randomUUID()}",
                                     kind = TimelineKind.COMPACTION,
                                     title = "Context compacted",
                                 )
-                                state.copy(timeline = state.timeline + marker, notice = "Task context compacted")
+                                state.copy(timeline = state.timeline + marker)
                             }
                         }
                     }
                     is AppServerEvent.McpLoginCompleted -> {
-                        _state.update {
+                        _state.updateWithNotices {
                             it.copy(
                                 isMcpLoginStarting = false,
                                 notice = if (event.success) {
@@ -1502,8 +1501,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         if (event.success) reloadMcpServers()
                     }
-                    is AppServerEvent.ThreadSettingsUpdated -> _state.update { state ->
-                        if (state.selectedThreadId != event.threadId) return@update state
+                    is AppServerEvent.ThreadSettingsUpdated -> _state.updateWithNotices { state ->
+                        if (state.selectedThreadId != event.threadId) return@updateWithNotices state
                         val model = state.models.firstOrNull { it.id == event.settings.model }
                         state.copy(
                             selectedModel = model?.id ?: state.selectedModel,
@@ -1521,10 +1520,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     is AppServerEvent.LoginCompleted -> {
                         if (event.success) {
-                            _state.update { it.copy(remoteDeviceLogin = null, isLoginStarting = false) }
+                            _state.updateWithNotices { it.copy(remoteDeviceLogin = null, isLoginStarting = false) }
                             refreshRemoteAccount()
                         } else {
-                            _state.update {
+                            _state.updateWithNotices {
                                 it.copy(
                                     remoteDeviceLogin = null,
                                     isLoginStarting = false,
@@ -1533,7 +1532,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
-                    is AppServerEvent.Failure -> _state.update { state ->
+                    is AppServerEvent.Failure -> _state.updateWithNotices { state ->
                         if (state.acceptsThreadEvent(event.threadId)) {
                             state.copy(
                                 notice = event.message,
@@ -1545,12 +1544,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             state
                         }
                     }
-                    is AppServerEvent.Warning -> _state.update { it.copy(notice = event.message) }
+                    is AppServerEvent.Warning -> _state.updateWithNotices { it.copy(notice = event.message) }
                     is AppServerEvent.Diagnostic -> {
                         if (event.message.contains("not found", ignoreCase = true) ||
                             event.message.contains("not recognized", ignoreCase = true)
                         ) {
-                            _state.update { it.copy(notice = "The remote login shell could not find the codex command: ${event.message}") }
+                            _state.updateWithNotices { it.copy(notice = "The remote login shell could not find the codex command: ${event.message}") }
                         }
                     }
                 }
@@ -1567,7 +1566,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 account to models
             }.onSuccess { (account, models) ->
                 if (rpc !== client) return@onSuccess
-                _state.update { state ->
+                _state.updateWithNotices { state ->
                     val selected = models.firstOrNull { it.id == state.selectedModel }
                         ?: models.firstOrNull { it.isDefault }
                         ?: models.firstOrNull()
@@ -1596,7 +1595,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         loading: Boolean = false,
     ) {
         val message = friendlyGoalError(error)
-        _state.update { state ->
+        _state.updateWithNotices { state ->
             if (state.selectedThreadId == threadId) {
                 state.copy(
                     isGoalLoading = loading,
@@ -1630,8 +1629,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun upsertItem(threadId: String?, item: TimelineItem) = _state.update { state ->
-        if (!state.acceptsThreadEvent(threadId)) return@update state
+    private fun upsertItem(threadId: String?, item: TimelineItem) = _state.updateWithNotices { state ->
+        if (!state.acceptsThreadEvent(threadId)) return@updateWithNotices state
         val index = state.timeline.indexOfFirst { it.id == item.id }
         val localUserIndex = if (item.kind == TimelineKind.USER) {
             state.timeline.indexOfLast { it.id.startsWith("local-") && it.kind == TimelineKind.USER && it.body == item.body }
@@ -1642,8 +1641,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         else state.copy(timeline = state.timeline.toMutableList().also { it[index] = item })
     }
 
-    private fun appendDelta(threadId: String?, id: String, delta: String, kind: TimelineKind) = _state.update { state ->
-        if (!state.acceptsThreadEvent(threadId)) return@update state
+    private fun appendDelta(threadId: String?, id: String, delta: String, kind: TimelineKind) = _state.updateWithNotices { state ->
+        if (!state.acceptsThreadEvent(threadId)) return@updateWithNotices state
         val index = state.timeline.indexOfFirst { it.id == id }
         if (index < 0) {
             state.copy(timeline = state.timeline + TimelineItem(id, kind, body = delta, status = "inProgress"))
@@ -1663,7 +1662,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess { threads ->
                     if (rpc !== client) return@onSuccess
                     val projects = groupThreadsByProject(threads)
-                    _state.update { state ->
+                    _state.updateWithNotices { state ->
                         state.withThreadCatalog(threads).copy(
                             connectionMessage = connectionSummary(
                                 projects.size,
@@ -1702,11 +1701,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun refreshComposerCatalog(forceReload: Boolean = false) {
         val client = rpc ?: return
         val cwds = _state.value.projects.map { it.path }.filter(String::isNotBlank)
-        _state.update { it.copy(isComposerCatalogLoading = true, composerCatalogError = null) }
+        _state.updateWithNotices { it.copy(isComposerCatalogLoading = true, composerCatalogError = null) }
         viewModelScope.launch {
             val catalog = loadComposerCatalog(client, cwds, forceReload)
             if (rpc !== client) return@launch
-            _state.update {
+            _state.updateWithNotices {
                 it.copy(
                     skills = catalog.skills,
                     plugins = catalog.plugins,
@@ -1719,7 +1718,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun showError(error: Throwable) {
         if (error is CancellationException) return
-        _state.update { it.copy(isBusy = false, notice = friendlyError(error)) }
+        _state.updateWithNotices { it.copy(isBusy = false, notice = friendlyError(error)) }
     }
 
     private fun friendlyError(error: Throwable): String {

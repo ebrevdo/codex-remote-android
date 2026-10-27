@@ -78,6 +78,13 @@ excessive bursts and sustained input.
 
 ## Validation
 
+On 2026-10-12, 163 JVM tests passed and one integration test was skipped. Six
+workspace UI tests passed on an Android 15/API 35 software emulator. These cover
+editable drafts during checks, drafts and goal mode across reconnection, new-task
+resets, thread switching, visible recovery status and Back navigation. Strict offline
+release and test-APK builds passed; lint reported zero errors and five existing
+warnings. The release was signed with the existing key and its payload verified.
+
 On 2026-09-16, 115 JVM tests and the separate real OpenSSH/Codex integration test
 passed. Strict offline release/test-APK builds passed; lint reported zero errors
 and 19 existing warnings. The release was signed with the same key as the preceding

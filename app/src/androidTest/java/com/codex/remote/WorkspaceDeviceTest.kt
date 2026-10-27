@@ -179,6 +179,32 @@ class WorkspaceDeviceTest {
     }
 
     @Test
+    fun statusUpdatesStayInTheConversationWithoutCoveringTheComposer() {
+        val initial = baseState(timeline = listOf(TimelineItem("answer", TimelineKind.AGENT, body = "Original answer")))
+        val state = mutableStateOf(initial)
+        show(state)
+        composeRule.onNodeWithTag(COMPOSER_INPUT).performTextInput("Keep typing")
+        composeRule.runOnIdle {
+            var updated = state.value
+            for (message in listOf("Automatic review approved this action", "Message added to the running task", "Configuration warning")) {
+                updated = updated.copy(notice = message).recordNotice()
+            }
+            state.value = updated
+        }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertTextContains("Keep typing").performTextInput(" after approval")
+        composeRule.mainClock.advanceTimeBy(10_000)
+        for (item in state.value.timeline.filter { it.kind == TimelineKind.NOTICE }) {
+            scrollTo("timeline-item-${item.id}")
+            composeRule.onNodeWithText(item.body).assertIsDisplayed()
+            val messageBounds = composeRule.onNodeWithText(item.body).fetchSemanticsNode().boundsInRoot
+            val composerBounds = composeRule.onNodeWithTag(COMPOSER_INPUT).fetchSemanticsNode().boundsInRoot
+            assertTrue(messageBounds.bottom <= composerBounds.top)
+        }
+        composeRule.onNodeWithTag(COMPOSER_INPUT).assertTextContains("Keep typing after approval")
+        composeRule.runOnIdle { assertNull(state.value.notice) }
+    }
+
+    @Test
     fun connectionChecksAndRecoveryAreVisibleOnTheMainScreen() {
         val state = mutableStateOf(baseState().copy(isCheckingConnection = true))
         show(state)
@@ -712,7 +738,6 @@ val answer = 42
                     onApproval = { _, _, _ -> },
                     onTrustHostKey = {},
                     onRejectHostKey = {},
-                    onDismissNotice = {},
                 )
             }
         }

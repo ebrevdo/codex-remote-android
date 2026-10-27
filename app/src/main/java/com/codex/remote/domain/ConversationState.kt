@@ -48,6 +48,7 @@ internal fun AppUiState.withResumedThread(
     return resumed.copy(
         conversationRevision = if (restoring && selectedThreadId == thread.id) conversationRevision else resumed.conversationRevision,
         selectedThreadId = thread.id,
+        timeline = if (restoring && selectedThreadId == thread.id) timeline.filter { it.kind == TimelineKind.NOTICE } else resumed.timeline,
         isGoalLoading = true,
         isBusy = true,
     )

@@ -111,8 +111,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -249,7 +247,6 @@ fun WorkspaceScreen(
     onApproval: (ApprovalRequest, String, Map<String, List<String>>) -> Unit,
     onTrustHostKey: () -> Unit,
     onRejectHostKey: () -> Unit,
-    onDismissNotice: () -> Unit,
 ) {
     val composerDraft = remember(state.activeConnection?.id, state.selectedThreadId, state.conversationRevision) { ComposerDraft() }
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
@@ -328,7 +325,6 @@ fun WorkspaceScreen(
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
                     onOpenConnections = onOpenConnections,
-                    onDismissNotice = onDismissNotice,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -407,7 +403,6 @@ fun WorkspaceScreen(
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
                     onOpenConnections = onOpenConnections,
-                    onDismissNotice = onDismissNotice,
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -832,10 +827,8 @@ private fun WorkspaceContent(
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
     onOpenConnections: () -> Unit,
-    onDismissNotice: () -> Unit,
     modifier: Modifier,
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
     var showGoalEditor by remember(state.selectedThreadId) { mutableStateOf(false) }
     var pendingGoalObjective by remember(state.selectedThreadId) { mutableStateOf<String?>(null) }
     var showReviewDialog by remember(state.selectedThreadId) { mutableStateOf(false) }
@@ -869,12 +862,6 @@ private fun WorkspaceContent(
         state.remoteAccount?.canRunCodex == true &&
         state.models.isNotEmpty() &&
         (state.selectedProjectPath?.isNotBlank() == true || state.selectedThreadId != null)
-    LaunchedEffect(state.notice) {
-        state.notice?.let {
-            snackbarHostState.showSnackbar(it)
-            onDismissNotice()
-        }
-    }
     LaunchedEffect(state.threadGoal?.objective, state.isGoalLoading, state.goalError) {
         val pending = pendingGoalObjective ?: return@LaunchedEffect
         if (!state.isGoalLoading && state.goalError == null && state.threadGoal?.objective == pending) {
@@ -885,7 +872,6 @@ private fun WorkspaceContent(
     Scaffold(
         modifier = modifier,
         contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Surface(
                 modifier = Modifier.statusBarsPadding(),
@@ -1635,6 +1621,10 @@ private fun TimelineRow(item: TimelineItem, modifier: Modifier, onOpenLink: (Str
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp))
+        }
+        TimelineKind.NOTICE -> Column(modifier.padding(vertical = 6.dp)) {
+            Text("Status", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SelectionContainer { Text(item.body, style = MaterialTheme.typography.bodyMedium) }
         }
         TimelineKind.ERROR -> ExpandableTool(
             modifier, Icons.Outlined.ErrorOutline, item.title.ifBlank { "Error" }, item.body, item.status,

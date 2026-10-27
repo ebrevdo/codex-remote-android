@@ -75,6 +75,11 @@ recovers. The selected conversation is reattached and refreshed without replayin
 messages, commands or approval responses. Host-key, credential and security-limit
 failures require manual attention. See [connection recovery](docs/CONNECTION_RECOVERY.md).
 
+Approval-review notices, warnings, and other status messages appear in the
+conversation's scrolling history. They stay visible as you scroll and survive a
+reconnect to the same open task. Host settings show persistent inline messages
+with a Dismiss button.
+
 ## File previews
 
 Tap a file link in an assistant message to preview it from the connected SSH host.

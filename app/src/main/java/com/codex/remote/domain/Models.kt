@@ -365,6 +365,7 @@ enum class TimelineKind {
     TOOL,
     REVIEW,
     COMPACTION,
+    NOTICE,
     ERROR,
 }
 
