@@ -32,18 +32,16 @@ internal class WebSocketMessageStream(
     private val output: OutputStream,
     private val abort: () -> Unit,
     private val timeoutMillis: Long = 15_000,
-    private val maxMessageBytes: Int = 4 * 1024 * 1024,
 ) : MessageStream {
     private val lock = Any()
     private val closed = AtomicBoolean(false)
     private val messages = ArrayDeque<String>()
-    private var queuedChars = 0
     private val inputRate = InputRateLimit(64L * 1024 * 1024, "WebSocket traffic")
     private var handshakeBytes = 0
     private var handshakeComplete = false
     private var failure: IOException? = null
     private val buffer = ByteArray(8192)
-    private val engine = WebSocketImpl(Listener(), BoundedDraft(maxMessageBytes))
+    private val engine = WebSocketImpl(Listener(), BoundedDraft())
 
     fun connect() = withIoDeadline(timeoutMillis, ::close) {
         synchronized(lock) {
@@ -67,10 +65,7 @@ internal class WebSocketMessageStream(
         while (true) {
             synchronized(lock) {
                 checkFailure()
-                messages.pollFirst()?.let {
-                    queuedChars -= it.length
-                    return it
-                }
+                messages.pollFirst()?.let { return it }
                 if (closed.get() || engine.isClosing || engine.isClosed) return null
             }
             if (!readBytes()) {
@@ -134,12 +129,11 @@ internal class WebSocketMessageStream(
     private inner class Listener : WebSocketAdapter() {
         override fun onWebsocketMessage(conn: WebSocket, message: String) {
             if (failure != null || closed.get()) return
-            if (messages.size >= MAX_QUEUED_MESSAGES || message.length > maxMessageBytes - queuedChars) {
+            if (messages.size >= MAX_QUEUED_MESSAGES) {
                 failure = InputLimitExceededException("WebSocket receive queue exceeded its limit")
                 return
             }
             messages.addLast(message)
-            queuedChars += message.length
         }
 
         override fun onWebsocketMessage(conn: WebSocket, blob: ByteBuffer) {
@@ -193,12 +187,12 @@ internal class WebSocketMessageStream(
         }
     }
 
-    /** The library bounds bytes; also bound zero-length fragments and control-frame floods. */
-    private class BoundedDraft(private val messageLimit: Int) : Draft_6455(emptyList(), messageLimit) {
+    /** Use the library's default size range; bound fragment and control-frame floods. */
+    private class BoundedDraft : Draft_6455() {
         private var fragments = 0
         private val frameRate = InputRateLimit(100_000, "WebSocket frames")
 
-        override fun copyInstance(): Draft = BoundedDraft(messageLimit)
+        override fun copyInstance(): Draft = BoundedDraft()
 
         override fun processFrame(socket: WebSocketImpl, frame: Framedata) {
             try {

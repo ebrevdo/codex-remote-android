@@ -86,18 +86,18 @@ x^2
         assertEquals("$$\\eta$$", normalizeLatexMarkdown("""\(\eta\)"""))
     }
 
-    @Test fun normalizesMathThroughThe256KiCharacterBoundary() {
+    @Test fun normalizesMathBeyondTheFormerMessageSizeCutoff() {
         val math = """\(x\) """
-        for (length in listOf(32 * 1024 + 1, 256 * 1024 - 1, 256 * 1024)) {
+        for (length in listOf(32 * 1024 + 1, 256 * 1024 - 1, 256 * 1024, 256 * 1024 + 1, 1024 * 1024)) {
             val padding = "a".repeat(length - math.length)
             assertEquals("${'$'}${'$'}x${'$'}${'$'} " + padding, normalizeLatexMarkdown(math + padding))
         }
-        val oversized = math + "a".repeat(256 * 1024 + 1 - math.length)
-        assertEquals(oversized, normalizeLatexMarkdown(oversized))
+        val prefix = "a".repeat(256 * 1024)
+        assertEquals(prefix + "${'$'}${'$'}x${'$'}${'$'} ", normalizeLatexMarkdown(prefix + math))
     }
 
-    @Test fun preservesEmptyDelimitersAndLongPlainTextFallback() {
-        for (source in listOf("""\(\)""", """\[  \]""", """\(x\) """ + "a".repeat(256 * 1024))) {
+    @Test fun preservesEmptyDelimiters() {
+        for (source in listOf("""\(\)""", """\[  \]""")) {
             assertEquals(source, normalizeLatexMarkdown(source))
         }
     }

@@ -50,9 +50,10 @@ recovery still depends on the server. See [connection recovery](CONNECTION_RECOV
 ## Additional transport limits
 
 - HTTP upgrade input: 16 KiB; handshake deadline: 15 seconds.
-- Incoming WebSocket frame and reassembled message: 4 MiB.
+- Incoming WebSocket frames and reassembled messages use the library's default
+  size range (up to Integer.MAX_VALUE bytes), with no app-specific size cap.
 - Fragmented message: at most 1,024 fragments, including empty fragments.
-- Buffered decoded messages: at most 128 and at most 4 Mi characters combined.
+- Buffered decoded messages: at most 128, with no combined character cap.
 - WebSocket traffic: burst budgets of 64 MiB of wire input and 100,000 frames
   (including control frames), replenished continuously at those amounts per minute,
   in addition to the RPC character/message rate limits. No lifetime traffic cap.

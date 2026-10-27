@@ -66,12 +66,12 @@ class WebSocketMessageStreamTest {
     }
 
     @Test
-    fun rejectsOversizedFrameFromItsHeaderBeforeReadingPayload() {
+    fun rejectsFramesLargerThanTheLibraryBufferCanRepresent() {
         Peer({ socket ->
             upgrade(socket)
-            socket.getOutputStream().write(byteArrayOf(0x81.toByte(), 127) + ByteBuffer.allocate(8).putLong(1_000_000).array())
+            socket.getOutputStream().write(byteArrayOf(0x81.toByte(), 127) + ByteBuffer.allocate(8).putLong(Int.MAX_VALUE.toLong() + 1).array())
             readClientFrame(socket.getInputStream()) // Protocol close, without sending the advertised payload.
-        }, maxMessageBytes = 32).use { peer ->
+        }).use { peer ->
             assertThrows(IOException::class.java) {
                 peer.stream.connect()
                 peer.stream.readMessage()
@@ -81,17 +81,25 @@ class WebSocketMessageStreamTest {
     }
 
     @Test
-    fun rejectsOversizedFragmentedMessage() {
-        Peer({ socket ->
-            upgrade(socket)
-            socket.getOutputStream().write(frame(0x01, "123456".toByteArray()) + frame(0x80, "789012".toByteArray()))
-            readClientFrame(socket.getInputStream())
-        }, maxMessageBytes = 8).use { peer ->
-            assertThrows(IOException::class.java) {
+    fun acceptsFramesAndFragmentedMessagesLargerThanFourMiB() {
+        val message = """{"result":"${"x".repeat(4 * 1024 * 1024 + 1)}"}"""
+        for (fragmented in listOf(false, true)) {
+            Peer({ socket ->
+                upgrade(socket)
+                if (fragmented) {
+                    val middle = message.length / 2
+                    send(socket, 0x01, message.substring(0, middle).toByteArray())
+                    send(socket, 0x80, message.substring(middle).toByteArray())
+                } else {
+                    send(socket, 0x81, message.toByteArray())
+                }
+                send(socket, 0x81, "{}".toByteArray())
+            }).use { peer ->
                 peer.stream.connect()
-                peer.stream.readMessage()
+                assertEquals(message, peer.stream.readMessage())
+                assertEquals("{}", peer.stream.readMessage())
+                peer.await()
             }
-            peer.await()
         }
     }
 
@@ -211,7 +219,6 @@ class WebSocketMessageStreamTest {
     private class Peer(
         serve: (Socket) -> Unit,
         timeoutMillis: Long = 2_000,
-        maxMessageBytes: Int = 4 * 1024 * 1024,
     ) : Closeable {
         private val listener = ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())
         private val client = Socket(listener.inetAddress, listener.localPort)
@@ -222,7 +229,7 @@ class WebSocketMessageStreamTest {
                 serve(socket)
             }
         }
-        val stream = WebSocketMessageStream(client.getInputStream(), client.getOutputStream(), { client.close() }, timeoutMillis, maxMessageBytes)
+        val stream = WebSocketMessageStream(client.getInputStream(), client.getOutputStream(), { client.close() }, timeoutMillis)
         fun await() { task.get(5, TimeUnit.SECONDS) }
         override fun close() {
             stream.close()
@@ -251,8 +258,12 @@ class WebSocketMessageStreamTest {
         }
 
         private fun frame(opcode: Int, data: ByteArray): ByteArray {
-            require(data.size < 126)
-            return byteArrayOf(opcode.toByte(), data.size.toByte()) + data
+            val header = when {
+                data.size < 126 -> byteArrayOf(opcode.toByte(), data.size.toByte())
+                data.size <= 65535 -> ByteBuffer.allocate(4).put(opcode.toByte()).put(126.toByte()).putShort(data.size.toShort()).array()
+                else -> ByteBuffer.allocate(10).put(opcode.toByte()).put(127.toByte()).putLong(data.size.toLong()).array()
+            }
+            return header + data
         }
 
         private fun send(socket: Socket, opcode: Int, data: ByteArray) = socket.getOutputStream().write(frame(opcode, data))

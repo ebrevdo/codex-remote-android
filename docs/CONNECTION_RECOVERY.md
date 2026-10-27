@@ -37,13 +37,13 @@ app overrides those decisions.
 
 ## Input bounds
 
-Per-message, parser-depth, fragment and queue bounds remain in place. Cumulative
-connection counters are replaced by token buckets, which replenish continuously:
+Parser-depth, fragment and queued-message-count bounds apply to WebSocket input,
+which uses the library's default message-size range. Stdio input has a per-line cap.
 RPC and WebSocket input have burst budgets of 64 Mi characters/64 MiB and 100,000
 messages/frames, refilling at those amounts per minute. Diagnostic input has budgets
 of 2 Mi characters and 10,000 lines, also refilling per minute. Quiet time cannot
 accumulate more than one full burst. This permits long sessions while still rejecting
-oversized messages and excessive sustained input.
+excessive bursts and sustained input.
 
 ## Validation
 

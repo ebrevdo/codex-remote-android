@@ -265,6 +265,29 @@ val answer = 42
     }
 
     @Test
+    fun longMessagesStillRenderMarkdownBeyondTheFormerCutoff() {
+        val markdown = "**bold-at-start**\n\n" + "plain text ".repeat(26_000) + "\n\n**bold-at-end**"
+        composeRule.setContent {
+            CodexRemoteTheme {
+                com.codex.remote.ui.screens.MarkdownBody(markdown, onOpenLink = {})
+            }
+        }
+        composeRule.runOnIdle {
+            val rendered = composeRule.activity.window.decorView.descendantTextViews()
+                .first { it.text.contains("bold-at-start") }.text as Spanned
+            for (marker in listOf("bold-at-start", "bold-at-end")) {
+                assertFalse(rendered.contains("**$marker**"))
+                val start = rendered.toString().indexOf(marker)
+                assertTrue(start >= 0)
+                assertTrue(rendered.getSpans(start, start + marker.length, Any::class.java).any { span ->
+                    (span is StyleSpan && span.style and Typeface.BOLD != 0) ||
+                        span.javaClass.name.contains("StrongEmphasis", ignoreCase = true)
+                })
+            }
+        }
+    }
+
+    @Test
     fun bottomButtonReachesSentinelAfterLongAgentResponse() {
         val longAnswer = (1..80).joinToString("\n\n") { "Rendered answer paragraph $it" }
         val timeline = buildList {

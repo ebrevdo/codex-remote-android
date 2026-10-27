@@ -75,7 +75,10 @@ commit; a future schema extension requires an explicit client update.
 
 ## Input limits
 
-- RPC line: 4 Mi characters; JSON nesting: 64 levels.
+- Stdio RPC line: 4 Mi characters; JSON nesting in either transport: 64 levels.
+- WebSocket frames and reassembled messages use the library's default size range
+  (up to Integer.MAX_VALUE bytes). The receive queue holds at most 128 messages
+  and has no combined character cap.
 - RPC traffic: a burst budget of 64 Mi characters and 100,000 messages, replenished
   continuously at those amounts per minute. No cumulative connection lifetime cap.
 - Diagnostic line: 16 Ki characters; diagnostic traffic: 2 Mi characters and 10,000
@@ -91,8 +94,7 @@ commit; a future schema extension requires an explicit client update.
   File reads have a 15-second deadline after opening the SSH session channel and
   a 5-second SFTP request timeout. Dismissal cancels the read. Paths are passed to
   SFTP as data, never interpolated into shell commands. No file is read until tapped.
-- Messages longer than 256 Ki characters use plain selectable text instead of
-  rich Markdown/LaTeX rendering.
+- Markdown/LaTeX rendering has no message-length cutoff.
 
 These limits can reject unusually large legitimate histories or outputs. They
 bound input size; they are not a proof against every parser or rendering DoS.

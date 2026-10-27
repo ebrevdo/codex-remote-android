@@ -1840,8 +1840,6 @@ internal fun String.isTimelineItemRunning(): Boolean =
         equals("running", ignoreCase = true) ||
         equals("started", ignoreCase = true)
 
-private const val MAX_MARKDOWN_CHARS = 256 * 1024
-
 @Composable
 internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLink: (String) -> Unit) {
     val context = LocalContext.current
@@ -1877,19 +1875,13 @@ internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLin
         },
         update = { textView ->
             textView.setTextColor(textColor)
-            if (rendered.length <= MAX_MARKDOWN_CHARS) {
-                markwon.setMarkdown(textView, rendered)
-            } else {
-                textView.text = rendered
-            }
+            markwon.setMarkdown(textView, rendered)
         },
         modifier = modifier.fillMaxWidth(),
     )
 }
 
 internal fun normalizeLatexMarkdown(markdown: String): String {
-    // Long messages already use plain text; avoid preprocessing content we will not render.
-    if (markdown.length > MAX_MARKDOWN_CHARS) return markdown
     if ('$' !in markdown && "\\(" !in markdown && "\\[" !in markdown) return markdown
     val output = StringBuilder(markdown.length + 16)
     var index = 0

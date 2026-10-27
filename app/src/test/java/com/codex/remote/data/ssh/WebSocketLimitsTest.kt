@@ -25,15 +25,6 @@ class WebSocketLimitsTest {
     }
 
     @Test
-    fun boundsTotalQueuedCharactersAcrossIndividuallyValidMessages() {
-        val frame = byteArrayOf(0x81.toByte(), 5) + "12345".toByteArray()
-        val peer = MemoryPeer(frame + frame, maxMessageBytes = 8)
-        val error = assertThrows(IOException::class.java) { peer.stream.connect() }
-        assertTrue(error.message.orEmpty().contains("queue"))
-        peer.stream.close()
-    }
-
-    @Test
     fun refusesUnsolicitedCompressionOrSubprotocols() {
         for (header in listOf("Sec-WebSocket-Extensions: permessage-deflate\r\n", "Sec-WebSocket-Protocol: unknown\r\n")) {
             val peer = MemoryPeer(extraHeaders = header)
@@ -65,7 +56,6 @@ class WebSocketLimitsTest {
     private class MemoryPeer(
         frames: ByteArray = byteArrayOf(),
         extraHeaders: String = "",
-        maxMessageBytes: Int = 4 * 1024 * 1024,
         timeoutMillis: Long = 1_000,
     ) {
         private val written = ByteArrayOutputStream()
@@ -91,6 +81,6 @@ class WebSocketLimitsTest {
         val stream = WebSocketMessageStream(input, output, {
             closes++
             released.countDown()
-        }, timeoutMillis, maxMessageBytes)
+        }, timeoutMillis)
     }
 }
