@@ -108,12 +108,13 @@ commit; a future schema extension requires an explicit client update.
 - Image previews: image files, including SVG, are streamed to a private temporary
   cache file and rendered as an image resource in a local WebView. JavaScript,
   network loads, file/content access and network-backed Safe Browsing checks are
-  disabled. A request interceptor serves only the exact local image URL and blocks
-  other requests; CSP also restricts the HTML wrapper and the image resource.
+  disabled. A request interceptor serves a fixed HTML wrapper at its exact local
+  main-frame URL and the image at a separate exact local URL. All other requests
+  are blocked; CSP also restricts the HTML wrapper and the image resource.
   Remote SVG markup is never inserted into the HTML page. Navigation is blocked,
   the WebView is destroyed on dismissal, and temporary preview files are deleted.
-  WebView initialization failures and renderer exits show an unavailable preview
-  instead of terminating the app; an exited renderer is detached and destroyed.
+  WebView initialization failures, local resource load errors and renderer exits
+  show an unavailable preview. The WebView is detached and destroyed on failure.
 - Markdown/LaTeX rendering has no message-length cutoff.
 
 These limits can reject unusually large legitimate histories or outputs. They

@@ -27,7 +27,7 @@ class RemoteFileTypeTest {
     fun imageResourcesAreLimitedToOneExactLocalGetRequest() {
         assertTrue(isLocalImageRequest(IMAGE_PREVIEW_RESOURCE, "GET"))
         for (url in listOf(
-            "https://unknown.example/image", "http://codex-file-preview.invalid/image",
+            IMAGE_PREVIEW_PAGE, "https://unknown.example/image", "http://codex-file-preview.invalid/image",
             IMAGE_PREVIEW_RESOURCE + "?path=/etc/passwd", IMAGE_PREVIEW_RESOURCE + "/other",
             "https://codex-file-preview.invalid:443/image", "https://user@codex-file-preview.invalid/image",
             "https://codex-file-preview.invalid.evil/image", "file:///data/data/com.codex.remote/files/secrets",

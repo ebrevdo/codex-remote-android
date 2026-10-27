@@ -24,8 +24,9 @@ internal fun remoteImageMimeType(path: String): String? = when (remoteFileExtens
     else -> null
 }
 
-// The WebView serves exactly one local image. Every other request is blocked.
+// The WebView serves a fixed preview page and exactly one local image; all other requests are blocked.
 internal const val IMAGE_PREVIEW_ORIGIN = "https://codex-file-preview.invalid/"
+internal const val IMAGE_PREVIEW_PAGE = IMAGE_PREVIEW_ORIGIN + "preview"
 internal const val IMAGE_PREVIEW_RESOURCE = IMAGE_PREVIEW_ORIGIN + "image"
 internal fun isLocalImageRequest(url: String, method: String): Boolean =
     method == "GET" && url == IMAGE_PREVIEW_RESOURCE

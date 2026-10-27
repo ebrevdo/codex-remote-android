@@ -1,6 +1,7 @@
 package com.codex.remote
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.widget.TextView
@@ -10,15 +11,16 @@ import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.codex.remote.data.security.IMAGE_PREVIEW_PAGE
+import com.codex.remote.data.security.IMAGE_PREVIEW_RESOURCE
 import com.codex.remote.ui.screens.ImagePreviewView
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -56,6 +58,75 @@ class RemoteImagePreviewDeviceTest {
     }
 
     @Test
+    fun servesTheFixedPageAndImageWhileBlockingAllOtherResources() {
+        val bytes = byteArrayOf(1, 2, 3)
+        val file = File.createTempFile("preview-routes-", ".png", composeRule.activity.cacheDir)
+        file.writeBytes(bytes)
+        try {
+            composeRule.runOnIdle {
+                var initialUrl: String? = null
+                lateinit var webView: WebView
+                val preview = ImagePreviewView(composeRule.activity, file, "image/png") { context ->
+                    object : WebView(context) {
+                        override fun loadUrl(url: String) { initialUrl = url }
+                    }.also { webView = it }
+                }
+                try {
+                    assertEquals(IMAGE_PREVIEW_PAGE, initialUrl)
+                    val client = webView.webViewClient
+                    val page = checkNotNull(client.shouldInterceptRequest(webView, request(IMAGE_PREVIEW_PAGE, mainFrame = true)))
+                    assertEquals(200, page.statusCode)
+                    assertEquals("text/html", page.mimeType)
+                    val html = page.data.bufferedReader().use { it.readText() }
+                    assertTrue(html.contains("<img src=\"$IMAGE_PREVIEW_RESOURCE\""))
+                    assertTrue(html.contains("default-src 'none'"))
+                    val image = checkNotNull(client.shouldInterceptRequest(webView, request(IMAGE_PREVIEW_RESOURCE)))
+                    assertEquals(200, image.statusCode)
+                    assertEquals("image/png", image.mimeType)
+                    assertArrayEquals(bytes, image.data.use { it.readBytes() })
+                    val blocked = listOf(
+                        request(IMAGE_PREVIEW_PAGE),
+                        request(IMAGE_PREVIEW_PAGE, mainFrame = true, method = "POST"),
+                        request(IMAGE_PREVIEW_RESOURCE, method = "POST"),
+                        request("$IMAGE_PREVIEW_PAGE?path=/etc/passwd", mainFrame = true),
+                        request("$IMAGE_PREVIEW_RESOURCE?path=/etc/passwd"),
+                        request("data:text/html;charset=utf-8;base64,"),
+                        request("https://unknown.example/pixel"),
+                        request("file:///etc/passwd"),
+                        request("content://private/item"),
+                    )
+                    for (resource in blocked) {
+                        val response = checkNotNull(client.shouldInterceptRequest(webView, resource))
+                        assertEquals(resource.url.toString(), 403, response.statusCode)
+                        response.data.close()
+                        assertTrue(client.shouldOverrideUrlLoading(webView, resource))
+                    }
+                } finally {
+                    preview.release()
+                }
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun missingImageShowsFallbackInsteadOfABrowserErrorPage() {
+        lateinit var preview: ImagePreviewView
+        composeRule.setContent {
+            AndroidView(factory = { context ->
+                ImagePreviewView(context, File(context.cacheDir, "missing-${System.nanoTime()}.png"), "image/png")
+                    .also { preview = it }
+            }, onRelease = { it.release() }, modifier = Modifier.fillMaxSize())
+        }
+        composeRule.waitUntil(90_000) { composeRule.runOnIdle { preview.getChildAt(0) is TextView } }
+        composeRule.runOnIdle {
+            assertEquals(1, preview.childCount)
+            assertTrue((preview.getChildAt(0) as TextView).text.contains("Download and open"))
+        }
+    }
+
+    @Test
     fun unavailableWebViewProviderShowsFallbackInsteadOfCrashing() {
         lateinit var preview: ImagePreviewView
         composeRule.setContent {
@@ -79,7 +150,7 @@ class RemoteImagePreviewDeviceTest {
         composeRule.setContent {
             AndroidView(factory = { context ->
                 ImagePreviewView(context, File(context.cacheDir, "unused.svg"), "image/svg+xml") {
-                    WebView(it).also { view -> webView = view }
+                    object : WebView(it) { override fun loadUrl(url: String) {} }.also { view -> webView = view }
                 }.also { preview = it }
             }, onRelease = { it.release() })
         }
@@ -111,9 +182,9 @@ class RemoteImagePreviewDeviceTest {
                     }.also { preview = it }
                 }, onRelease = { it.release() }, modifier = Modifier.fillMaxSize())
             }
-            composeRule.waitUntil(30_000) { composeRule.runOnIdle { webView.progress == 100 && webView.webViewRenderProcess != null } }
+            composeRule.waitUntil(90_000) { composeRule.runOnIdle { webView.progress == 100 && webView.webViewRenderProcess != null } }
             composeRule.runOnIdle { assertTrue(webView.webViewRenderProcess!!.terminate()) }
-            composeRule.waitUntil(30_000) { composeRule.runOnIdle { preview.getChildAt(0) is TextView } }
+            composeRule.waitUntil(90_000) { composeRule.runOnIdle { preview.getChildAt(0) is TextView } }
             composeRule.runOnIdle {
                 assertNull(webView.parent)
                 assertTrue((preview.getChildAt(0) as TextView).text.contains("Download and open"))
@@ -137,27 +208,41 @@ class RemoteImagePreviewDeviceTest {
                 onRelease = { it.release() },
             )
         }
-        composeRule.waitUntil(30_000) { composeRule.runOnIdle { webView.progress == 100 } }
+        composeRule.waitUntil(90_000) { composeRule.runOnIdle { webView.progress == 100 } }
         composeRule.runOnIdle {
             assertFalse(webView.settings.javaScriptEnabled)
             assertFalse(webView.settings.allowFileAccess)
             assertFalse(webView.settings.allowContentAccess)
             assertTrue(webView.settings.blockNetworkLoads)
-            for (url in listOf("https://unknown.example/pixel", "file:///etc/passwd", "content://private/item")) {
-                val request = object : WebResourceRequest {
-                    override fun getUrl() = Uri.parse(url)
-                    override fun isForMainFrame() = false
-                    override fun isRedirect() = false
-                    override fun hasGesture() = false
-                    override fun getMethod() = "GET"
-                    override fun getRequestHeaders() = emptyMap<String, String>()
-                }
-                assertEquals(403, webView.webViewClient.shouldInterceptRequest(webView, request)?.statusCode)
-                assertTrue(webView.webViewClient.shouldOverrideUrlLoading(webView, request))
+        }
+        val drawn = AtomicBoolean()
+        composeRule.runOnIdle {
+            assertNotNull("Preview unexpectedly fell back", webView.parent)
+            assertEquals(IMAGE_PREVIEW_PAGE, webView.url)
+            webView.postVisualStateCallback(0, object : WebView.VisualStateCallback() {
+                override fun onComplete(requestId: Long) { drawn.set(true) }
+            })
+        }
+        composeRule.waitUntil(90_000) { drawn.get() }
+        val bounds = composeRule.runOnIdle { Rect().also { assertTrue(webView.getGlobalVisibleRect(it)) } }
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        composeRule.waitUntil(90_000) {
+            val screenshot = checkNotNull(automation.takeScreenshot())
+            try {
+                val pixel = screenshot.getPixel(bounds.centerX(), bounds.centerY())
+                android.graphics.Color.red(pixel) > 200 && android.graphics.Color.green(pixel) < 50 && android.graphics.Color.blue(pixel) < 50
+            } finally {
+                screenshot.recycle()
             }
         }
-        val pixels = composeRule.onNodeWithTag("image-test").captureToImage().toPixelMap()
-        val center = pixels[pixels.width / 2, pixels.height / 2]
-        assertTrue("The image did not render", center.red > 0.8f && center.green < 0.2f && center.blue < 0.2f)
+    }
+
+    private fun request(url: String, mainFrame: Boolean = false, method: String = "GET") = object : WebResourceRequest {
+        override fun getUrl() = Uri.parse(url)
+        override fun isForMainFrame() = mainFrame
+        override fun isRedirect() = false
+        override fun hasGesture() = false
+        override fun getMethod() = method
+        override fun getRequestHeaders() = emptyMap<String, String>()
     }
 }

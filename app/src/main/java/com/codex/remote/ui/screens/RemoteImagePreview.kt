@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.util.Log
 import android.view.Gravity
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -20,6 +21,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import com.codex.remote.R
 import com.codex.remote.data.security.IMAGE_PREVIEW_ORIGIN
+import com.codex.remote.data.security.IMAGE_PREVIEW_PAGE
 import com.codex.remote.data.security.IMAGE_PREVIEW_RESOURCE
 import com.codex.remote.data.security.isLocalImageRequest
 import java.io.ByteArrayInputStream
@@ -51,7 +53,9 @@ internal class ImagePreviewView(
             val view = webViewFactory(context)
             webView = view
             addView(view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-            configureImagePreview(view, file, mimeType) { showUnavailable() }
+            configureImagePreview(view, file, mimeType) {
+                if (webView === view) showUnavailable()
+            }
         } catch (failure: RuntimeException) {
             Log.e("ImagePreview", "Could not initialize the image preview", failure)
             showUnavailable()
@@ -76,7 +80,7 @@ internal class ImagePreviewView(
 }
 
 /** The remote file is an image resource, never HTML, with no scripting or external resource access. */
-private fun configureImagePreview(view: WebView, file: File, mimeType: String, onRendererGone: () -> Unit) = with(view) {
+private fun configureImagePreview(view: WebView, file: File, mimeType: String, onUnavailable: () -> Unit) = with(view) {
     setBackgroundColor(Color.WHITE)
     settings.apply {
         javaScriptEnabled = false
@@ -92,24 +96,6 @@ private fun configureImagePreview(view: WebView, file: File, mimeType: String, o
         loadWithOverviewMode = true
     }
     setOnLongClickListener { true }
-    webViewClient = object : WebViewClient() {
-        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            Log.e("ImagePreview", "Image renderer exited; crashed=${detail.didCrash()}")
-            onRendererGone()
-            return true
-        }
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
-        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
-            if (isLocalImageRequest(request.url.toString(), request.method)) {
-                val input = runCatching { file.inputStream() }.getOrNull()
-                if (input != null) return WebResourceResponse(mimeType, null, 200, "OK", mapOf(
-                    "Content-Security-Policy" to "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
-                    "X-Content-Type-Options" to "nosniff",
-                ), input)
-            }
-            return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(byteArrayOf()))
-        }
-    }
     val html = """
         <!doctype html><html><head>
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -117,5 +103,42 @@ private fun configureImagePreview(view: WebView, file: File, mimeType: String, o
         <style>html,body{margin:0;width:100%;height:100%;background:white}body{display:flex;align-items:center;justify-content:center}img{max-width:100%;max-height:100%;object-fit:contain}</style>
         </head><body><img src="$IMAGE_PREVIEW_RESOURCE" alt="Image preview unavailable. Download and open this file."></body></html>
     """.trimIndent()
-    loadDataWithBaseURL(IMAGE_PREVIEW_ORIGIN, html, "text/html", "UTF-8", null)
+    webViewClient = object : WebViewClient() {
+        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+            Log.e("ImagePreview", "Image renderer exited; crashed=${detail.didCrash()}")
+            onUnavailable()
+            return true
+        }
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            previewLoadFailed(view, request)
+        }
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+            previewLoadFailed(view, request)
+        }
+        private fun previewLoadFailed(view: WebView, request: WebResourceRequest) {
+            if (request.isForMainFrame || isLocalImageRequest(request.url.toString(), request.method)) {
+                Log.w("ImagePreview", "Could not load a local preview resource")
+                view.post { onUnavailable() }
+            }
+        }
+        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = true
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
+            if (request.isForMainFrame && request.method == "GET" && request.url.toString() == IMAGE_PREVIEW_PAGE) {
+                return WebResourceResponse("text/html", "UTF-8", 200, "OK", mapOf(
+                    "X-Content-Type-Options" to "nosniff",
+                    "Cache-Control" to "no-store",
+                ), html.byteInputStream())
+            }
+            if (isLocalImageRequest(request.url.toString(), request.method)) {
+                val input = runCatching { file.inputStream() }.getOrNull()
+                if (input == null) return WebResourceResponse("text/plain", "UTF-8", 404, "Not Found", emptyMap(), ByteArrayInputStream(byteArrayOf()))
+                return WebResourceResponse(mimeType, null, 200, "OK", mapOf(
+                    "Content-Security-Policy" to "default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+                    "X-Content-Type-Options" to "nosniff",
+                ), input)
+            }
+            return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", emptyMap(), ByteArrayInputStream(byteArrayOf()))
+        }
+    }
+    loadUrl(IMAGE_PREVIEW_PAGE)
 }
