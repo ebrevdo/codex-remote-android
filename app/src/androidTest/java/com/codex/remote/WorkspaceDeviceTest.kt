@@ -281,12 +281,12 @@ class WorkspaceDeviceTest {
         show(state)
 
         scrollTo("timeline-tool-body-reasoning")
-        composeRule.onNodeWithText("private reasoning").assertIsDisplayed()
+        assertNativeOutputContains("private reasoning")
         scrollTo("timeline-tool-body-command-group:cmd-1")
         composeRule.onNodeWithText("Ran multiple commands").assertExists()
-        composeRule.onNodeWithText("/workspace/demo", substring = true).assertExists()
+        assertNativeOutputContains("/workspace/demo")
         scrollTo("timeline-tool-body-tool")
-        composeRule.onNodeWithText("tool details").assertIsDisplayed()
+        assertNativeOutputContains("tool details")
         scrollTo("file-changes-files")
         composeRule.onNodeWithText("+val ready = true").assertExists()
 
@@ -302,11 +302,11 @@ class WorkspaceDeviceTest {
         }
 
         scrollTo("timeline-tool-reasoning")
-        composeRule.onNodeWithText("private reasoning").assertDoesNotExist()
+        composeRule.onNodeWithTag("timeline-tool-body-reasoning").assertDoesNotExist()
         scrollTo("timeline-tool-command-group:cmd-1")
-        composeRule.onNodeWithText("/workspace/demo", substring = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("timeline-tool-body-command-group:cmd-1").assertDoesNotExist()
         scrollTo("timeline-tool-tool")
-        composeRule.onNodeWithText("tool details").assertDoesNotExist()
+        composeRule.onNodeWithTag("timeline-tool-body-tool").assertDoesNotExist()
         scrollTo("file-changes-files")
         composeRule.onNodeWithText("+val ready = true").assertDoesNotExist()
     }
@@ -678,6 +678,12 @@ val answer = 42
         composeRule.onNodeWithText("+2  -1").assertExists()
         composeRule.onAllNodesWithText("Changes").assertCountEquals(0)
         composeRule.onAllNodesWithText("{\"changes\"", substring = true).assertCountEquals(0)
+    }
+
+    private fun assertNativeOutputContains(text: String) {
+        composeRule.runOnIdle {
+            assertTrue(composeRule.activity.window.decorView.descendantTextViews().any { text in it.text })
+        }
     }
 
     private fun scrollTo(tag: String) {

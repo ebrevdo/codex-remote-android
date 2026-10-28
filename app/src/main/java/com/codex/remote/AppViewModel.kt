@@ -410,6 +410,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         connectJob?.cancel()
         closeClient()
         val unknownHostKey = generateSequence(error) { it.cause }.filterIsInstance<UnknownHostKeyException>().firstOrNull()
+        val retryable = isRetryableConnectionFailure(error)
         _state.updateWithNotices {
             it.copy(
                 connectionStatus = ConnectionStatus.ERROR,
@@ -425,10 +426,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 statusError = friendlyError(error),
                 isOlderHistoryLoading = false,
                 isThreadCatalogLoading = false,
-                notice = friendlyError(error),
+                notice = if (retryable) null else friendlyError(error),
             )
         }
-        recovery.failed(isRetryableConnectionFailure(error))
+        recovery.failed(retryable)
     }
 
     private fun closeClient() {

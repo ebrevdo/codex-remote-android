@@ -14,9 +14,15 @@ internal fun MutableStateFlow<AppUiState>.updateWithNotices(transform: (AppUiSta
 
 internal fun AppUiState.recordNotice(): AppUiState {
     val message = notice ?: return this
+    if (message.isRoutineDisconnectNotice()) return copy(notice = null)
     if (activeConnection == null || showConnections) return this
     return copy(
         notice = null,
         timeline = timeline + TimelineItem("notice-${UUID.randomUUID()}", TimelineKind.NOTICE, body = message),
     )
 }
+
+private fun String.isRoutineDisconnectNotice(): Boolean =
+    contains("software caused connection abort", ignoreCase = true) ||
+        contains("software caused disconnection", ignoreCase = true) ||
+        contains("software created disconnection", ignoreCase = true)

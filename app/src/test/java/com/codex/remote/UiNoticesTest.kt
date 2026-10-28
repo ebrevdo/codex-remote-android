@@ -2,6 +2,7 @@ package com.codex.remote
 
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.AuthType
+import com.codex.remote.domain.ConnectionStatus
 import com.codex.remote.domain.RemoteThread
 import com.codex.remote.domain.SavedConnection
 import com.codex.remote.domain.TimelineItem
@@ -14,6 +15,50 @@ import org.junit.Test
 
 class UiNoticesTest {
     private val connection = SavedConnection("host", "Host", "example.com", username = "user", authType = AuthType.PASSWORD)
+
+    @Test
+    fun routineSocketAbortMessagesNeverBecomeChatOrSettingsNotices() {
+        for (settings in listOf(false, true)) {
+            val state = MutableStateFlow(AppUiState(activeConnection = connection, showConnections = settings))
+            for (message in listOf(
+                "Software caused connection abort",
+                "java.net.SocketException: Software caused connection abort: recv failed",
+                "SOFTWARE CAUSED DISCONNECTION",
+                "Software created disconnection",
+            )) {
+                state.updateWithNotices { it.copy(notice = message) }
+            }
+            assertNull(state.value.notice)
+            assertTrue(state.value.timeline.isEmpty())
+        }
+    }
+
+    @Test
+    fun filteringTransportChatterKeepsConnectionStatusAndConversationContent() {
+        val socketError = "Software caused connection abort"
+        val answer = TimelineItem("answer", TimelineKind.AGENT, body = "The log says: $socketError")
+        val state = AppUiState(
+            activeConnection = connection,
+            connectionStatus = ConnectionStatus.CONNECTING,
+            connectionMessage = "Disconnected. Reconnecting…",
+            statusError = socketError,
+            timeline = listOf(answer),
+            notice = socketError,
+        ).recordNotice()
+        assertEquals(ConnectionStatus.CONNECTING, state.connectionStatus)
+        assertEquals("Disconnected. Reconnecting…", state.connectionMessage)
+        assertEquals(socketError, state.statusError)
+        assertEquals(listOf(answer), state.timeline)
+        assertNull(state.notice)
+    }
+
+    @Test
+    fun actionableErrorsAndApprovalMessagesStillAppear() {
+        val state = MutableStateFlow(AppUiState(activeConnection = connection))
+        val messages = listOf("SSH host key changed", "SSH authentication failed", "Action approved", "Download failed: disk full")
+        messages.forEach { message -> state.updateWithNotices { it.copy(notice = message) } }
+        assertEquals(messages, state.value.timeline.map { it.body })
+    }
 
     @Test
     fun rapidAndIdenticalNoticesRemainInOrderWithoutWaitingForTheUi() {

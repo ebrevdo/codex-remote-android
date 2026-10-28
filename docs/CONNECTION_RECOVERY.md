@@ -27,6 +27,11 @@ network triggers recovery immediately when a connection has already failed. The
 app does not create a foreground service
 or promise an uninterrupted background socket.
 
+Retryable disconnects update the connection banner and Remote status details without
+appending chat notices. Socket-abort notices are also discarded when a pending
+operation reports them. Authentication, host-key, and other actionable failures
+still produce notices.
+
 Reconnection uses stored credentials and the pinned host key, initializes a fresh
 RPC client, refreshes host state, and resumes the selected thread. Its history and
 reported active-turn ID are restored. Manual reconnect to the same host also keeps

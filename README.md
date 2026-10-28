@@ -87,7 +87,13 @@ resumes that same conversation and retries once. Uncertain deliveries are never 
 Approval-review notices, warnings, and other status messages appear in the
 conversation's scrolling history. They stay visible as you scroll and survive a
 reconnect to the same open task. Host settings show persistent inline messages
-with a Dismiss button.
+with a Dismiss button. Routine disconnects stay in connection status rather than
+adding repeated socket-abort lines to the conversation.
+
+Expanded tool output uses a scrolling text panel, so a long command cannot grow
+one Compose row beyond its size limits. The panel keeps the complete output and
+follows new text when you are at the end. Markdown uses the same containment for
+exceptionally tall replies, without a message-length cutoff.
 
 ## File previews
 

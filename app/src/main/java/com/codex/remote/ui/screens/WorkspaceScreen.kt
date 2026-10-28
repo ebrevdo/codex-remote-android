@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
-import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1853,14 +1852,12 @@ private fun ExpandableTool(
             }
             if (expanded && body.isNotBlank()) {
                 HorizontalDivider()
-                SelectionContainer {
-                    Text(
-                        body,
-                        modifier = Modifier.fillMaxWidth().padding(12.dp)
-                            .testTag("timeline-tool-body-$expansionKey"),
-                        style = if (mono) MonoText else MaterialTheme.typography.bodyMedium,
-                    )
-                }
+                ScrollableTextBody(
+                    body,
+                    modifier = Modifier.padding(12.dp).testTag("timeline-tool-body-$expansionKey"),
+                    mono = mono,
+                    followOutput = status.isTimelineItemRunning(),
+                )
             }
         }
     }
@@ -1898,18 +1895,18 @@ internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLin
     val rendered = remember(text) { normalizeLatexMarkdown(text) }
     AndroidView(
         factory = { viewContext ->
-            TextView(viewContext).apply {
-                setTextIsSelectable(true)
-                movementMethod = TableAwareMovementMethod.create()
-                includeFontPadding = false
-                setLineSpacing(0f, 1.12f)
+            ScrollableTextView(viewContext).apply {
+                textView.apply {
+                    movementMethod = TableAwareMovementMethod.create()
+                    setLineSpacing(0f, 1.12f)
+                }
             }
         },
-        update = { textView ->
-            textView.setTextColor(textColor)
-            markwon.setMarkdown(textView, rendered)
+        update = { view ->
+            view.textView.setTextColor(textColor)
+            view.updateContent(rendered to markwon, follow = true) { markwon.setMarkdown(it, rendered) }
         },
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().heightIn(max = 8192.dp),
     )
 }
 
