@@ -86,7 +86,7 @@ val block = "${'$'}stillRaw${'$'}"
             TimelineItem("answer", TimelineKind.AGENT, body = "Done"),
         )
 
-        val presentation = groupConsecutiveCommands(timeline)
+        val presentation = groupTimelineItems(timeline)
 
         assertEquals(3, presentation.size)
         assertEquals("Ran multiple commands", presentation[1].item.title)

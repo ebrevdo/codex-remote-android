@@ -90,6 +90,11 @@ reconnect to the same open task. Host settings show persistent inline messages
 with a Dismiss button. Routine disconnects stay in connection status rather than
 adding repeated socket-abort lines to the conversation.
 
+Automatic approvals appear as compact, collapsed rows with their risk level.
+Consecutive approvals share a count; tap the row to see every full explanation
+and authorization detail. Higher-risk approvals start expanded. Denials, warnings,
+and failures remain separate and visible.
+
 Expanded tool output uses a scrolling text panel, so a long command cannot grow
 one Compose row beyond its size limits. The panel keeps the complete output and
 follows new text when you are at the end. Markdown uses the same containment for

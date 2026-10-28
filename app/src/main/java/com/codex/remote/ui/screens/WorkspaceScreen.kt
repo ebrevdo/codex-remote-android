@@ -1149,6 +1149,7 @@ private fun ConnectionIndicator(state: AppUiState) {
 internal data class TimelinePresentationItem(
     val item: TimelineItem,
     val sourceItemIds: List<String>,
+    val approvalNotices: List<TimelineItem> = emptyList(),
 )
 
 private data class HistoryScrollAnchor(
@@ -1158,10 +1159,22 @@ private data class HistoryScrollAnchor(
     val revealOlder: Boolean,
 )
 
-internal fun groupConsecutiveCommands(timeline: List<TimelineItem>): List<TimelinePresentationItem> = buildList {
+internal fun groupTimelineItems(timeline: List<TimelineItem>): List<TimelinePresentationItem> = buildList {
     var index = 0
     while (index < timeline.size) {
         val item = timeline[index]
+        if (item.automaticApprovalRisk() != null) {
+            var end = index + 1
+            while (end < timeline.size && timeline[end].automaticApprovalRisk() != null) end++
+            val notices = timeline.subList(index, end)
+            add(TimelinePresentationItem(
+                item = item.copy(id = "approval-group:${item.id}"),
+                sourceItemIds = notices.map(TimelineItem::id),
+                approvalNotices = notices,
+            ))
+            index = end
+            continue
+        }
         if (item.kind != TimelineKind.COMMAND) {
             add(TimelinePresentationItem(item, listOf(item.id)))
             index++
@@ -1251,7 +1264,7 @@ private fun Conversation(
 ) {
     val conversationKey = state.selectedThreadId ?: "project:${state.selectedProjectPath.orEmpty()}"
     val scrollScope = rememberCoroutineScope()
-    val presentationTimeline = remember(state.timeline) { groupConsecutiveCommands(state.timeline) }
+    val presentationTimeline = remember(state.timeline) { groupTimelineItems(state.timeline) }
     var pendingHistoryAnchor by remember(conversationKey) { mutableStateOf<HistoryScrollAnchor?>(null) }
     var programmaticScroll by remember(conversationKey) { mutableStateOf(false) }
     val historyHeaderVisible = state.hasOlderHistory ||
@@ -1454,6 +1467,7 @@ private fun Conversation(
         state.selectedThreadId,
         presentationTimeline.size,
         presentationTimeline.lastOrNull()?.item?.body?.length,
+        presentationTimeline.lastOrNull()?.sourceItemIds?.size,
         state.isTurnRunning,
         historyHeaderVisible,
         pendingHistoryAnchor,
@@ -1492,7 +1506,12 @@ private fun Conversation(
                     Modifier.fillMaxWidth().testTag("timeline-item-${presentation.item.id}"),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    TimelineRow(presentation.item, Modifier.fillMaxWidth().widthIn(max = 820.dp), onOpenLink)
+                    val rowModifier = Modifier.fillMaxWidth().widthIn(max = 820.dp)
+                    if (presentation.approvalNotices.isNotEmpty()) {
+                        ApprovalNotice(presentation.approvalNotices, rowModifier)
+                    } else {
+                        TimelineRow(presentation.item, rowModifier, onOpenLink)
+                    }
                 }
             }
             if (state.isTurnRunning && presentationTimeline.lastOrNull()?.item?.kind != TimelineKind.AGENT) {
@@ -1652,13 +1671,12 @@ private fun TimelineRow(item: TimelineItem, modifier: Modifier, onOpenLink: (Str
             )
             HorizontalDivider(Modifier.weight(1f).padding(start = 8.dp))
         }
-        TimelineKind.NOTICE -> Column(modifier.padding(vertical = 6.dp)) {
-            Text("Status", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            SelectionContainer { Text(item.body, style = MaterialTheme.typography.bodyMedium) }
+        TimelineKind.NOTICE -> SelectionContainer(modifier.padding(vertical = 2.dp)) {
+            Text(item.body, style = MaterialTheme.typography.bodySmall)
         }
         TimelineKind.ERROR -> ExpandableTool(
             modifier, Icons.Outlined.ErrorOutline, item.title.ifBlank { "Error" }, item.body, item.status,
-            expansionKey = item.id,
+            expansionKey = item.id, initiallyExpanded = true,
         )
     }
 }
@@ -1822,9 +1840,10 @@ private fun ExpandableTool(
     expansionKey: String,
     mono: Boolean = false,
     autoCollapseOnComplete: Boolean = false,
+    initiallyExpanded: Boolean = false,
 ) {
     var expanded by remember(expansionKey) {
-        mutableStateOf(autoCollapseOnComplete && status.isTimelineItemRunning())
+        mutableStateOf(initiallyExpanded || (autoCollapseOnComplete && status.isTimelineItemRunning()))
     }
     LaunchedEffect(expansionKey, status, autoCollapseOnComplete) {
         if (autoCollapseOnComplete) expanded = status.isTimelineItemRunning()
