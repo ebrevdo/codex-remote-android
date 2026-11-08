@@ -129,6 +129,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -1925,7 +1926,7 @@ internal fun MarkdownBody(text: String, modifier: Modifier = Modifier, onOpenLin
             view.textView.setTextColor(textColor)
             view.updateContent(rendered to markwon, follow = true) { markwon.setMarkdown(it, rendered) }
         },
-        modifier = modifier.fillMaxWidth().heightIn(max = 8192.dp),
+        modifier = modifier.fillMaxWidth().heightIn(max = 8192.dp).clipToBounds(),
     )
 }
 

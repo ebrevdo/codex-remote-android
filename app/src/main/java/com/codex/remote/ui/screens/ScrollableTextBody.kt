@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -74,6 +75,7 @@ internal fun ScrollableTextBody(
             }
             view.updateContent(text, followOutput) { it.text = text }
         },
-        modifier = modifier.fillMaxWidth().heightIn(max = 480.dp),
+        // AndroidView does not clip native drawing to its Compose layout bounds by default.
+        modifier = modifier.fillMaxWidth().heightIn(max = 480.dp).clipToBounds(),
     )
 }

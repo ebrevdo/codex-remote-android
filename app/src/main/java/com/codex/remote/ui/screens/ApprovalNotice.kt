@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,14 +56,17 @@ internal fun summarizeApprovalNotices(notices: List<TimelineItem>): ApprovalNoti
 @Composable
 internal fun ApprovalNotice(notices: List<TimelineItem>, modifier: Modifier = Modifier) {
     val summary = remember(notices) { summarizeApprovalNotices(notices) }
-    var expanded by remember(notices.first().id, summary.expandedByDefault) {
-        mutableStateOf(summary.expandedByDefault)
+    // Lazy rows leave composition while scrolling. Keep explicit choices when they return,
+    // and when new approvals change the group's default risk-based expansion.
+    var expandedOverride by rememberSaveable(notices.first().id) {
+        mutableStateOf<Boolean?>(null)
     }
+    val expanded = expandedOverride ?: summary.expandedByDefault
     val color = if (summary.expandedByDefault) MaterialTheme.colorScheme.error else CodexGreen
     Column(modifier.testTag("approval-notices-${notices.first().id}")) {
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp)
-                .clickable(role = Role.Button) { expanded = !expanded }
+                .clickable(role = Role.Button) { expandedOverride = !expanded }
                 .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
