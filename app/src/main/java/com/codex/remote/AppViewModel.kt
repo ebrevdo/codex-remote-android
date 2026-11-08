@@ -12,6 +12,7 @@ import com.codex.remote.data.store.ConnectionStore
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.RemoteFileDownload
+import com.codex.remote.domain.RemoteFileUpload
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.toDraft
 import com.codex.remote.domain.ConnectionDraft
@@ -1426,6 +1427,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             check(rpc === client) { "Connection changed. Reopen the file to try again." }
             client.downloadRemoteFile(path, output, onProgress)
             check(rpc === client) { "Connection changed. Reopen the file to try again." }
+        }
+    }
+
+    fun prepareRemoteFileUpload(): RemoteFileUpload {
+        val client = rpc ?: error("Reconnect to upload files.")
+        return RemoteFileUpload { displayName, input, onProgress ->
+            check(rpc === client) { "Connection changed. Select the file again to try uploading." }
+            val path = client.uploadRemoteFile(displayName, input, onProgress)
+            check(rpc === client) { "Connection changed. Select the file again to try uploading." }
+            path
         }
     }
 

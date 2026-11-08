@@ -101,6 +101,14 @@ one Compose row beyond its size limits. The panel keeps the complete output and
 follows new text when you are at the end. Markdown uses the same containment for
 exceptionally tall replies, without a message-length cutoff.
 
+The composer's **Add** menu offers **Files and folders** for remote paths,
+**Images** for image attachments, and **Upload file** for any document or binary
+file on your phone. Uploads stream over the existing SSH connection with progress,
+cancellation, and no file-size limit. Each upload gets its own private
+`.codex-remote-upload-…` directory in the remote user's home. When it finishes, its
+absolute path is inserted into your draft for Codex to read. Uploaded files remain
+on the remote host for later turns; project files are not overwritten.
+
 ## File previews
 
 Tap a file link in an assistant message to preview it from the connected SSH host.

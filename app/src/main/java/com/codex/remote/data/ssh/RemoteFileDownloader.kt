@@ -35,7 +35,7 @@ internal suspend fun downloadRemoteFile(
                     checkDownloadFile(file.fetchAttributes())
                     // Fixed read-ahead bounds memory while avoiding one network round trip per chunk.
                     file.ReadAheadRemoteFileInputStream(8).use { input ->
-                        copyDownload(input, output, onProgress) { context.ensureActive() }
+                        copyFileWithProgress(input, output, onProgress) { context.ensureActive() }
                     }
                 }
             }
@@ -48,7 +48,7 @@ private fun checkDownloadFile(attributes: FileAttributes) {
 }
 
 /** The caller owns both streams. Byte counts and SSHJ's file offsets are 64-bit. */
-internal fun copyDownload(
+internal fun copyFileWithProgress(
     input: InputStream,
     output: OutputStream,
     onProgress: (Long) -> Unit,
@@ -62,7 +62,7 @@ internal fun copyDownload(
         checkCancelled()
         val count = input.read(buffer)
         if (count < 0) break
-        if (count == 0) throw IOException("The remote file read made no progress.")
+        if (count == 0) throw IOException("The file read made no progress.")
         checkCancelled()
         output.write(buffer, 0, count)
         bytesCopied += count

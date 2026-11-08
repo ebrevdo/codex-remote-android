@@ -92,6 +92,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Unarchive
+import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -116,9 +117,11 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -160,6 +163,7 @@ import com.codex.remote.data.security.validatedBrowserUrl
 import com.codex.remote.data.security.visibleControls
 import com.codex.remote.domain.AppUiState
 import com.codex.remote.domain.RemoteFileDownload
+import com.codex.remote.domain.RemoteFileUpload
 import com.codex.remote.domain.ApprovalKind
 import com.codex.remote.domain.ApprovalRequest
 import com.codex.remote.domain.ConnectionStatus
@@ -194,6 +198,8 @@ import io.noties.markwon.ext.tables.TableAwareMovementMethod
 import io.noties.markwon.ext.tables.TablePlugin
 import io.noties.markwon.inlineparser.MarkwonInlineParserPlugin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -248,6 +254,7 @@ fun WorkspaceScreen(
     onTrustHostKey: () -> Unit,
     onRejectHostKey: () -> Unit,
     onRefreshThreadCatalog: () -> Unit = {},
+    prepareRemoteFileUpload: () -> RemoteFileUpload = { error("File uploads are unavailable on this connection.") },
 ) {
     val composerDraft = remember(state.activeConnection?.id, state.selectedThreadId, state.conversationRevision) { ComposerDraft() }
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
@@ -323,6 +330,7 @@ fun WorkspaceScreen(
                     onSetPermissionMode = onSetPermissionMode,
                     readRemoteFile = readRemoteFile,
                     prepareRemoteFileDownload = prepareRemoteFileDownload,
+                    prepareRemoteFileUpload = prepareRemoteFileUpload,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -402,6 +410,7 @@ fun WorkspaceScreen(
                     onSetPermissionMode = onSetPermissionMode,
                     readRemoteFile = readRemoteFile,
                     prepareRemoteFileDownload = prepareRemoteFileDownload,
+                    prepareRemoteFileUpload = prepareRemoteFileUpload,
                     onLoadRemoteDirectory = onLoadRemoteDirectory,
                     onClearRemoteDirectory = onClearRemoteDirectory,
                     onStartLogin = onStartLogin,
@@ -847,6 +856,7 @@ private fun WorkspaceContent(
     onSetPermissionMode: (PermissionMode) -> Unit,
     readRemoteFile: suspend (String) -> String,
     prepareRemoteFileDownload: (String) -> RemoteFileDownload,
+    prepareRemoteFileUpload: () -> RemoteFileUpload,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
     onStartLogin: () -> Unit,
@@ -1018,6 +1028,7 @@ private fun WorkspaceContent(
                             onSetPermissionMode = onSetPermissionMode,
                             onLoadRemoteDirectory = onLoadRemoteDirectory,
                             onClearRemoteDirectory = onClearRemoteDirectory,
+                            prepareRemoteFileUpload = prepareRemoteFileUpload,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -2077,6 +2088,7 @@ private fun Composer(
     onSetPermissionMode: (PermissionMode) -> Unit,
     onLoadRemoteDirectory: (String) -> Unit,
     onClearRemoteDirectory: () -> Unit,
+    prepareRemoteFileUpload: () -> RemoteFileUpload,
     modifier: Modifier = Modifier,
 ) {
     var text by draft.text
@@ -2092,6 +2104,44 @@ private fun Composer(
     var policyMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val composerScope = rememberCoroutineScope()
+    var pendingFileUpload by remember(draft) { mutableStateOf<RemoteFileUpload?>(null) }
+    var fileUploadJob by remember(draft) { mutableStateOf<Job?>(null) }
+    var uploadingFileName by remember(draft) { mutableStateOf("file") }
+    var uploadedBytes by remember(draft) { mutableLongStateOf(0) }
+    DisposableEffect(draft) {
+        onDispose { fileUploadJob?.cancel() }
+    }
+
+    fun insertAtCursor(value: String) {
+        val start = minOf(text.selection.start, text.selection.end).coerceIn(0, text.text.length)
+        val end = maxOf(text.selection.start, text.selection.end).coerceIn(start, text.text.length)
+        val updated = text.text.replaceRange(start, end, value)
+        text = TextFieldValue(updated, TextRange(start + value.length))
+    }
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val upload = pendingFileUpload
+        pendingFileUpload = null
+        if (uri == null || upload == null) return@rememberLauncherForActivityResult
+        uploadedBytes = 0
+        uploadingFileName = "file"
+        attachmentError = null
+        fileUploadJob = composerScope.launch {
+            try {
+                val path = uploadComposerFile(context, uri, upload) { name, bytes ->
+                    uploadingFileName = name
+                    uploadedBytes = bytes
+                }
+                insertAtCursor("${remotePathComposerToken("", path)} ")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                attachmentError = "Upload failed: ${error.message ?: "Unable to upload this file."}"
+            } finally {
+                fileUploadJob = null
+            }
+        }
+    }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         composerScope.launch {
@@ -2187,13 +2237,6 @@ private fun Composer(
         val activeTrigger = trigger ?: return
         val update = replaceComposerTrigger(text.text, activeTrigger, replacement)
         text = TextFieldValue(update.text, TextRange(update.cursor))
-    }
-
-    fun insertAtCursor(value: String) {
-        val start = minOf(text.selection.start, text.selection.end).coerceIn(0, text.text.length)
-        val end = maxOf(text.selection.start, text.selection.end).coerceIn(start, text.text.length)
-        val updated = text.text.replaceRange(start, end, value)
-        text = TextFieldValue(updated, TextRange(start + value.length))
     }
 
     fun insertMention(option: ComposerMentionOption) {
@@ -2334,6 +2377,9 @@ private fun Composer(
                 shadowElevation = 2.dp,
             ) {
                 Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                    if (fileUploadJob != null) {
+                        ComposerFileUploadProgress(uploadingFileName, uploadedBytes) { fileUploadJob?.cancel() }
+                    }
                     if (attachments.isNotEmpty()) {
                         Row(
                             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
@@ -2447,6 +2493,7 @@ private fun Composer(
                                 },
                                 canBrowseRemoteFiles = cwd.isNotBlank(),
                                 canAttachImage = supportsImages && attachments.size < MAX_COMPOSER_IMAGES,
+                                canUploadFile = fileUploadJob == null && pendingFileUpload == null,
                                 planModeAvailable = planModeAvailable,
                                 onOpen = { addMenuOpen = true },
                                 onDismiss = { addMenuOpen = false },
@@ -2458,6 +2505,16 @@ private fun Composer(
                                 onAttachImage = {
                                     addMenuOpen = false
                                     imagePicker.launch("image/*")
+                                },
+                                onUploadFile = {
+                                    addMenuOpen = false
+                                    try {
+                                        pendingFileUpload = prepareRemoteFileUpload()
+                                        filePicker.launch(arrayOf("*/*"))
+                                    } catch (error: Exception) {
+                                        pendingFileUpload = null
+                                        attachmentError = "Upload failed: ${error.message ?: "Unable to select a file."}"
+                                    }
                                 },
                                 onOpenGoal = {
                                     addMenuOpen = false
@@ -2605,7 +2662,7 @@ private fun Composer(
                                         }
                                     }
                                 },
-                                enabled = !state.isBusy && !state.isCheckingConnection && if (goalModeActive || inlineGoalObjective != null) {
+                                enabled = fileUploadJob == null && !state.isBusy && !state.isCheckingConnection && if (goalModeActive || inlineGoalObjective != null) {
                                     text.text.isNotBlank() && !state.isTurnRunning && !state.isGoalLoading
                                 } else {
                                     (text.text.isNotBlank() || attachments.isNotEmpty()) &&
@@ -2652,11 +2709,13 @@ private fun ComposerAddMenu(
     plugins: List<ComposerMentionOption>,
     canBrowseRemoteFiles: Boolean,
     canAttachImage: Boolean,
+    canUploadFile: Boolean,
     planModeAvailable: Boolean,
     onOpen: () -> Unit,
     onDismiss: () -> Unit,
     onBrowseRemoteFiles: () -> Unit,
     onAttachImage: () -> Unit,
+    onUploadFile: () -> Unit,
     onOpenGoal: () -> Unit,
     onPlanMode: () -> Unit,
     onMention: (ComposerMentionOption) -> Unit,
@@ -2690,6 +2749,13 @@ private fun ComposerAddMenu(
                 description = "Add images from your Android device",
                 enabled = canAttachImage,
                 onClick = onAttachImage,
+            )
+            AddMenuItem(
+                icon = Icons.Outlined.UploadFile,
+                title = "Upload file",
+                description = "Upload any file from your Android device",
+                enabled = canUploadFile,
+                onClick = onUploadFile,
             )
             AddMenuItem(
                 icon = Icons.Outlined.Flag,
@@ -2876,7 +2942,7 @@ internal fun remotePathComposerToken(root: String, path: String): String {
     val windows = '\\' in root || root.getOrNull(1) == ':'
     val separator = if (windows) '\\' else '/'
     val rootPrefix = root.trimEnd('/', '\\') + separator
-    val relative = if (path.startsWith(rootPrefix, ignoreCase = windows)) path.substring(rootPrefix.length) else path
+    val relative = if (root.isNotBlank() && path.startsWith(rootPrefix, ignoreCase = windows)) path.substring(rootPrefix.length) else path
     val normalized = relative.replace('\\', '/')
     return if (' ' in normalized) "@\"$normalized\"" else "@$normalized"
 }

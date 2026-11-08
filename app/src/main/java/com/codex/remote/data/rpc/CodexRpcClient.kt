@@ -73,6 +73,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.Closeable
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
@@ -196,6 +197,9 @@ class CodexRpcClient(
 
     suspend fun downloadRemoteFile(path: String, output: OutputStream, onProgress: (Long) -> Unit) =
         transport.downloadRemoteFile(path, output, onProgress)
+
+    suspend fun uploadRemoteFile(displayName: String, input: InputStream, onProgress: (Long) -> Unit): String =
+        transport.uploadRemoteFile(displayName, input, onProgress)
 
     suspend fun readRemoteDirectory(path: String): List<RemotePathEntry> {
         val result = request("fs/readDirectory", buildJsonObject { put("path", path) })

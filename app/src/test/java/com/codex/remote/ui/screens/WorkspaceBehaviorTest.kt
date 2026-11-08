@@ -24,6 +24,8 @@ class WorkspaceBehaviorTest {
     fun selectedRemotePathsBecomeReadableComposerReferences() {
         assertEquals("@src/Main.kt", remotePathComposerToken("/srv/app", "/srv/app/src/Main.kt"))
         assertEquals("@\"docs/release notes.md\"", remotePathComposerToken("C:\\work\\app", "C:\\work\\app\\docs\\release notes.md"))
+        assertEquals("@/home/user/report.csv", remotePathComposerToken("", "/home/user/report.csv"))
+        assertEquals("@\"/home/user/release notes.pdf\"", remotePathComposerToken("", "/home/user/release notes.pdf"))
     }
 
     @Test

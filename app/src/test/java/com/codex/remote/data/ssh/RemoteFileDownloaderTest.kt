@@ -19,7 +19,7 @@ class RemoteFileDownloaderTest {
         val input = object : ByteArrayInputStream(original) {
             override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, minOf(len, 137))
         }
-        val copied = copyDownload(input, output, progress::add) {}
+        val copied = copyFileWithProgress(input, output, progress::add) {}
         assertEquals(original.size.toLong(), copied)
         assertArrayEquals(original, output.toByteArray())
         assertEquals(0L, progress.first())
@@ -46,7 +46,7 @@ class RemoteFileDownloaderTest {
             override fun write(b: Int) = error("Expected buffered writes")
             override fun write(b: ByteArray, off: Int, len: Int) { written += len }
         }
-        assertEquals(size, copyDownload(input, output, { lastProgress = it }) {})
+        assertEquals(size, copyFileWithProgress(input, output, { lastProgress = it }) {})
         assertEquals(size, written)
         assertEquals(size, lastProgress)
     }
@@ -54,7 +54,7 @@ class RemoteFileDownloaderTest {
     @Test
     fun emptyFilesCompleteWithoutInventingBytes() {
         val output = ByteArrayOutputStream()
-        assertEquals(0L, copyDownload(ByteArrayInputStream(byteArrayOf()), output, {}) {})
+        assertEquals(0L, copyFileWithProgress(ByteArrayInputStream(byteArrayOf()), output, {}) {})
         assertEquals(0, output.size())
     }
 
@@ -69,7 +69,7 @@ class RemoteFileDownloaderTest {
         }
         val output = ByteArrayOutputStream()
         assertThrows(CancellationException::class.java) {
-            copyDownload(input, output, {}) { if (canceled) throw CancellationException() }
+            copyFileWithProgress(input, output, {}) { if (canceled) throw CancellationException() }
         }
         assertEquals(0, output.size())
     }
@@ -83,7 +83,7 @@ class RemoteFileDownloaderTest {
             override fun write(b: ByteArray, off: Int, len: Int) { throw failure }
         }
         val progress = mutableListOf<Long>()
-        assertSame(failure, assertThrows(IOException::class.java) { copyDownload(input, output, progress::add) {} })
+        assertSame(failure, assertThrows(IOException::class.java) { copyFileWithProgress(input, output, progress::add) {} })
         assertTrue(input.available() > 0)
         assertEquals(listOf(0L), progress)
     }

@@ -15,6 +15,7 @@ import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.password.PasswordUtils
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.security.MessageDigest
@@ -46,6 +47,9 @@ class ActiveSshTransport internal constructor(
 
     override suspend fun downloadRemoteFile(path: String, output: OutputStream, onProgress: (Long) -> Unit) =
         downloadRemoteFile(ssh, path, output, onProgress)
+
+    override suspend fun uploadRemoteFile(displayName: String, input: InputStream, onProgress: (Long) -> Unit): String =
+        uploadRemoteFile(ssh, remotePlatform, displayName, input, onProgress)
 
     override fun readMessage(): String? = messages.readMessage()
     override fun writeMessage(message: String) = withIoDeadline(15_000, ::close) {
