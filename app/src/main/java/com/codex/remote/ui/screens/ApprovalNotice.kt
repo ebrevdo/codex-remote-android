@@ -19,7 +19,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +40,7 @@ private val approvedNotice = Regex(
 internal fun TimelineItem.automaticApprovalRisk(): String? =
     if (kind == TimelineKind.NOTICE) approvedNotice.find(body)?.groupValues?.get(1)?.lowercase() else null
 
-internal data class ApprovalNoticeSummary(val text: String, val expandedByDefault: Boolean)
+internal data class ApprovalNoticeSummary(val text: String, val elevatedRisk: Boolean)
 
 internal fun summarizeApprovalNotices(notices: List<TimelineItem>): ApprovalNoticeSummary {
     val risk = notices.mapNotNull { it.automaticApprovalRisk() }
@@ -49,24 +48,19 @@ internal fun summarizeApprovalNotices(notices: List<TimelineItem>): ApprovalNoti
     val title = if (notices.size == 1) "Auto-approved" else "${notices.size} auto-approvals"
     return ApprovalNoticeSummary(
         text = if (risk == null) title else "$title · ${risk.replaceFirstChar(Char::uppercase)} risk",
-        expandedByDefault = risk != "low",
+        elevatedRisk = risk != "low",
     )
 }
 
 @Composable
 internal fun ApprovalNotice(notices: List<TimelineItem>, modifier: Modifier = Modifier) {
     val summary = remember(notices) { summarizeApprovalNotices(notices) }
-    // Lazy rows leave composition while scrolling. Keep explicit choices when they return,
-    // and when new approvals change the group's default risk-based expansion.
-    var expandedOverride by rememberSaveable(notices.first().id) {
-        mutableStateOf<Boolean?>(null)
-    }
-    val expanded = expandedOverride ?: summary.expandedByDefault
-    val color = if (summary.expandedByDefault) MaterialTheme.colorScheme.error else CodexGreen
+    var expanded by remember(notices.first().id) { mutableStateOf(false) }
+    val color = if (summary.elevatedRisk) MaterialTheme.colorScheme.error else CodexGreen
     Column(modifier.testTag("approval-notices-${notices.first().id}")) {
         Row(
             modifier = Modifier.fillMaxWidth().heightIn(min = 32.dp)
-                .clickable(role = Role.Button) { expandedOverride = !expanded }
+                .clickable(role = Role.Button) { expanded = !expanded }
                 .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
                 .padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,

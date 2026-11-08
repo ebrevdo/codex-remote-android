@@ -6,7 +6,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ApprovalNoticeTest {
-    @Test fun singleLowRiskApprovalHasACompactCollapsedSummary() {
+    @Test fun singleLowRiskApprovalHasACompactSummary() {
         val notice = approved("one")
         assertEquals(ApprovalNoticeSummary("Auto-approved · Low risk", false), summarizeApprovalNotices(listOf(notice)))
     }
@@ -41,12 +41,12 @@ class ApprovalNoticeTest {
         }
     }
 
-    @Test fun higherRiskApprovalsAreShownExpandedWithTheHighestRiskInTheSummary() {
+    @Test fun higherRiskApprovalsKeepTheHighestRiskInTheSummary() {
         val notices = listOf(approved("low"), approved("high", "high"), approved("medium", "medium"))
         val summary = summarizeApprovalNotices(groupTimelineItems(notices).single().approvalNotices)
         assertEquals("3 auto-approvals · High risk", summary.text)
-        assertTrue(summary.expandedByDefault)
-        assertTrue(summarizeApprovalNotices(listOf(approved("critical", "critical"))).expandedByDefault)
+        assertTrue(summary.elevatedRisk)
+        assertTrue(summarizeApprovalNotices(listOf(approved("critical", "critical"))).elevatedRisk)
     }
 
     @Test fun unrecognizedApprovalFormatsAndIncompleteReviewMessagesStayUncollapsed() {
