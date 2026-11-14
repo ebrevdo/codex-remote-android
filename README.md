@@ -27,6 +27,8 @@ come from the remote Codex history returned by `thread/list`.
 Opening a conversation resumes its live app-server subscription while loading
 only the latest five full turns; older turns are fetched as the chat is scrolled
 to the top, with a legacy full-history fallback for older Codex hosts.
+New sessions enter their project's list directly from the creation response or
+notification, so a lagging remote history index does not hide them until reconnect.
 
 The model and reasoning pickers are also remote data. They are loaded from
 `model/list`, so the choices follow the Codex version and account configured on

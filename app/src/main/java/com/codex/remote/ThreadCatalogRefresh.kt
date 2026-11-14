@@ -33,6 +33,12 @@ internal class ThreadCatalogRefresh(
         publish()
     }
 
+    /** Creation is visible before the history index catches up, without undoing later edits or archives. */
+    fun addStarted(thread: RemoteThread) {
+        if (thread.id in removedIds) return
+        upsert(threads[thread.id]?.takeIf { it.cwd.isNotBlank() } ?: thread)
+    }
+
     fun refresh(threadId: String? = null, removed: Boolean = false, restored: Boolean = false) {
         if (threadId != null) {
             if (removed) {

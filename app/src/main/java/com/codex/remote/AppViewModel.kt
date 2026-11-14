@@ -748,6 +748,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     approvalsReviewer = approvalsReviewer,
                     permissionProfile = permissionProfile,
                 ).let { started ->
+                    if (rpc === client) threadCatalog?.addStarted(started.thread)
                     request.update {
                         it.copy(
                             selectedThreadId = started.id,
@@ -1533,7 +1534,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     AppServerEvent.AccountChanged -> refreshRemoteAccount()
-                    is AppServerEvent.ThreadsChanged -> threadCatalog?.refresh(event.threadId, event.removed, event.restored)
+                    is AppServerEvent.ThreadsChanged -> {
+                        event.startedThread?.let { threadCatalog?.addStarted(it) }
+                        threadCatalog?.refresh(event.threadId, event.removed, event.restored)
+                    }
                     AppServerEvent.SkillsChanged -> refreshComposerCatalog(forceReload = true)
                     is AppServerEvent.GoalUpdated -> _state.updateWithNotices { state ->
                         if (state.selectedThreadId == event.threadId) {

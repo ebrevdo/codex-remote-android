@@ -94,6 +94,7 @@ sealed interface AppServerEvent {
     data object AccountChanged : AppServerEvent
     data class ThreadsChanged(
         val threadId: String?, val removed: Boolean = false, val restored: Boolean = false,
+        val startedThread: RemoteThread? = null,
     ) : AppServerEvent
     data object SkillsChanged : AppServerEvent
     data class GoalUpdated(val threadId: String, val goal: ThreadGoal) : AppServerEvent
@@ -463,12 +464,14 @@ class CodexRpcClient(
             "thread/start",
             threadStartParams(cwd, model, serviceTier, approvalPolicy, approvalsReviewer, permissionProfile),
         )
+        val thread = result["thread"]?.let(::parseThread)
+            ?: throw RpcException("thread/start returned no thread.id")
+        val resolvedCwd = result.string("cwd")?.takeIf(String::isNotBlank) ?: thread.cwd.ifBlank { cwd }
         return StartedRemoteThread(
-            id = result.obj("thread")?.string("id") ?: throw RpcException("thread/start returned no thread.id"),
+            thread = thread.copy(cwd = resolvedCwd),
             model = result.string("model") ?: model,
             reasoningEffort = result.string("reasoningEffort"),
             serviceTier = result.string("serviceTier") ?: serviceTier,
-            cwd = result.string("cwd") ?: cwd,
         )
     }
 
@@ -832,6 +835,9 @@ class CodexRpcClient(
                     threadId = params.string("threadId") ?: params.obj("thread")?.string("id"),
                     removed = method == "thread/archived" || method == "thread/deleted",
                     restored = method == "thread/unarchived",
+                    startedThread = if (method == "thread/started") {
+                        params["thread"]?.let(::parseThread)?.takeIf { it.cwd.isNotBlank() }
+                    } else null,
                 ),
             )
             "skills/changed" -> _events.emit(AppServerEvent.SkillsChanged)

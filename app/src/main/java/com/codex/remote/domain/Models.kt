@@ -287,12 +287,14 @@ data class RemoteThreadHistoryPage(
 )
 
 data class StartedRemoteThread(
-    val id: String,
+    val thread: RemoteThread,
     val model: String?,
     val reasoningEffort: String?,
     val serviceTier: String?,
-    val cwd: String,
-)
+) {
+    val id: String get() = thread.id
+    val cwd: String get() = thread.cwd
+}
 
 data class ForkedRemoteThread(
     val thread: RemoteThread,

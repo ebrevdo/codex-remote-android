@@ -2,6 +2,9 @@ package com.codex.remote
 
 import com.codex.remote.data.rpc.ThreadPage
 import com.codex.remote.domain.RemoteThread
+import com.codex.remote.domain.AppUiState
+import com.codex.remote.domain.withNewTask
+import com.codex.remote.domain.withThreadCatalog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
@@ -187,6 +190,58 @@ class ThreadCatalogRefreshTest {
         advanceUntilIdle()
         assertEquals("new", published.single().id)
         assertEquals(listOf(true, false, true, false), loading)
+        catalog.close()
+    }
+
+    @Test fun createdTaskAppearsInItsProjectWhileTheHistoryIndexStillOmitsIt() = runTest {
+        val indexed = thread("indexed", 1)
+        val created = thread("created", 10).copy(cwd = "/new-project")
+        var state = AppUiState().withThreadCatalog(listOf(indexed)).withNewTask(created.cwd)
+        val catalog = ThreadCatalogRefresh(
+            this, state.threads,
+            loadPage = { ThreadPage(listOf(indexed), null) },
+            onThreads = { state = state.withThreadCatalog(it) }, onError = { throw AssertionError(it) },
+        )
+        catalog.refresh()
+        advanceUntilIdle()
+        catalog.addStarted(created)
+        assertEquals(created, state.projects.first { it.path == created.cwd }.threads.single())
+        assertNull(state.selectedThreadId)
+        assertEquals(created.cwd, state.selectedProjectPath)
+        repeat(2) {
+            catalog.refresh(created.id)
+            advanceUntilIdle()
+        }
+        assertEquals(created, state.projects.first { it.path == created.cwd }.threads.single())
+        catalog.close()
+    }
+
+    @Test fun startedTaskSurvivesAnInFlightImportAndDelayedDuplicateNotifications() = runTest {
+        val lastPage = CompletableDeferred<ThreadPage>()
+        val created = thread("created", 10).copy(cwd = "/new-project")
+        var published = emptyList<RemoteThread>()
+        val catalog = ThreadCatalogRefresh(
+            this, emptyList(),
+            loadPage = { cursor ->
+                if (cursor == null) ThreadPage(listOf(thread("indexed", 1)), "last") else lastPage.await()
+            },
+            onThreads = { published = it }, onError = { throw AssertionError(it) },
+        )
+        catalog.refresh()
+        runCurrent()
+        catalog.addStarted(created)
+        assertEquals(created, published.first())
+        lastPage.complete(ThreadPage(emptyList(), null))
+        advanceUntilIdle()
+        assertEquals(created, published.first())
+        val renamed = created.copy(title = "Renamed", isPinned = true, updatedAt = 11)
+        catalog.upsert(renamed)
+        catalog.addStarted(created)
+        assertEquals(renamed, published.first())
+        catalog.refresh(created.id, removed = true)
+        catalog.addStarted(created)
+        advanceUntilIdle()
+        assertFalse(published.any { it.id == created.id })
         catalog.close()
     }
 
